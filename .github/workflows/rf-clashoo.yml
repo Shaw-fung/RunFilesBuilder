@@ -52,8 +52,10 @@ jobs:
             echo "$ALL_APKS" | while read -r name url; do
               if echo "$name" | grep -qE "${ARCH}"; then
                 # 去除文件名中的架构后缀,保留标准格式 包名-版本号.apk
-                # 例: clashoo-1.0-r1-arm_cortex-a7_neon-vfpv4.apk -> clashoo-1.0-r1.apk
-                clean_name=$(echo "$name" | sed "s/-${ARCH}//")
+                # 例: clashoo-2026.07.28.cb8e990-r1-arm_cortex-a7_neon-vfpv4.apk -> clashoo-2026.07.28~cb8e990-r1.apk
+                # 注意: Alpine apk 内部用 ~ 作为 pre-release 分隔符,但上游 release 文件名用 .
+                # 若不修正,ImageBuilder 生成的索引会引用 ~版本但找不到 .版本文件
+                clean_name=$(echo "$name" | sed "s/-${ARCH}//" | sed -E 's/\.([0-9a-f]{7})-r([0-9]+)\.apk/~\1-r\2.apk/')
                 echo "⬇️ $ARCH (apk): $name -> $clean_name"
                 curl -sL -o "apk-$ARCH/$clean_name" "$url"
               fi
