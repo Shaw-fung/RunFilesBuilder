@@ -1,5 +1,6 @@
 #=================================================
 # Build RunFiles for sirpdboy plugins (all-arch)
+# Split ipk/apk packages for 24.10/25.12
 #=================================================
 name: Make sirpdboy plugins run files
 
@@ -19,31 +20,45 @@ jobs:
       - name: Install makeself
         run: sudo apt-get update && sudo apt-get install -y makeself curl
 
-      - name: Download sirpdboy plugin ipks from dl.openwrt.ai
+      - name: Download 24.10 ipks from dl.openwrt.ai
         run: |
-          chmod +x shell/dl_openwrt_ai.sh
-          ./shell/dl_openwrt_ai.sh x86_64 \
-            luci-app-advancedplus \
-            luci-i18n-advancedplus-zh-cn \
-            luci-app-netwizard \
-            luci-i18n-netwizard-zh-cn \
-            luci-app-partexp \
-            luci-i18n-partexp-zh-cn \
-            luci-theme-kucat \
-            luci-app-taskplan \
-            luci-i18n-taskplan-zh-cn \
-            luci-app-watchdog \
-            luci-i18n-watchdog-zh-cn
+          mkdir -p ipk-sirpdboy
+          BASE_URL="https://dl.openwrt.ai/packages-24.10/x86_64/kiddin9/"
+          page_content=$(curl -s "$BASE_URL")
+          for prefix in luci-app-advancedplus luci-i18n-advancedplus-zh-cn luci-app-netwizard luci-i18n-netwizard-zh-cn luci-app-partexp luci-i18n-partexp-zh-cn luci-theme-kucat luci-app-taskplan luci-i18n-taskplan-zh-cn luci-app-watchdog luci-i18n-watchdog-zh-cn; do
+            match=$(echo "$page_content" | grep -oP 'href="\K[^"]+\.ipk' | grep "^${prefix}_" | head -n1)
+            if [ -n "$match" ]; then
+              echo "⬇️ (24.10): $match"
+              curl -sL -o "ipk-sirpdboy/${match}" "${BASE_URL}${match}"
+            else
+              echo "⚠️ not found: $prefix"
+            fi
+          done
+          ls -lh ipk-sirpdboy/
 
-      - name: Create sirpdboy directory and organize ipks
+      - name: Download 25.12 packages from dl.openwrt.ai
         run: |
-          mkdir -p sirpdboy
-          cp x86_64/*.ipk sirpdboy/ 2>/dev/null || true
-          ls -lh sirpdboy/
+          mkdir -p apk-sirpdboy
+          BASE_URL="https://dl.openwrt.ai/packages-25.12/x86_64/kiddin9/"
+          page_content=$(curl -s "$BASE_URL")
+          for prefix in luci-app-advancedplus luci-i18n-advancedplus-zh-cn luci-app-netwizard luci-i18n-netwizard-zh-cn luci-app-partexp luci-i18n-partexp-zh-cn luci-theme-kucat luci-app-taskplan luci-i18n-taskplan-zh-cn luci-app-watchdog luci-i18n-watchdog-zh-cn; do
+            match=$(echo "$page_content" | grep -oP 'href="\K[^"]+\.ipk' | grep "^${prefix}_" | head -n1)
+            if [ -n "$match" ]; then
+              echo "⬇️ (25.12): $match"
+              curl -sL -o "apk-sirpdboy/${match}" "${BASE_URL}${match}"
+            else
+              echo "⚠️ not found: $prefix"
+            fi
+          done
+          ls -lh apk-sirpdboy/
 
-      - name: Create install.sh
+      - name: Clone makeself and pack ipk (24.10)
         run: |
-          cat <<'EOF' > sirpdboy/install.sh
+          git clone https://github.com/megastep/makeself.git
+          mkdir -p output
+          VERSION=$(date -u -d '+8 hour' +'%Y-%m-%d')
+
+          cat <<'EOF' > ipk-sirpdboy/install.sh
           #!/bin/sh
           opkg update
           if [ $? -ne 0 ]; then
@@ -52,24 +67,45 @@ jobs:
           fi
           opkg install *.ipk --force-depends
           EOF
-          chmod +x sirpdboy/install.sh
-
-      - name: Clone makeself and pack
-        run: |
-          git clone https://github.com/megastep/makeself.git
-          mv sirpdboy makeself/
+          chmod +x ipk-sirpdboy/install.sh
+          mv ipk-sirpdboy makeself/
           cd makeself
+          ./makeself.sh ipk-sirpdboy/ ../output/sirpdboy_${VERSION}_ipk_all.run "sirpdboy plugins v${VERSION} (ipk for 24.10)" ./install.sh
+          cd ..
+
+      - name: Pack apk (25.12)
+        run: |
           VERSION=$(date -u -d '+8 hour' +'%Y-%m-%d')
-          ./makeself.sh sirpdboy/ sirpdboy-${VERSION}_all.run "sirpdboy plugins v${VERSION}" ./install.sh
-          mkdir -p ../output
-          mv *.run ../output/
+
+          cat <<'EOF' > apk-sirpdboy/install.sh
+          #!/bin/sh
+          apk add --no-cache --allow-untrusted *.ipk 2>/dev/null || opkg install *.ipk --force-depends
+          EOF
+          chmod +x apk-sirpdboy/install.sh
+          mv apk-sirpdboy makeself/
+          cd makeself
+          ./makeself.sh apk-sirpdboy/ ../output/sirpdboy_${VERSION}_apk_all.run "sirpdboy plugins v${VERSION} (apk for 25.12)" ./install.sh
+          cd ..
+
+      - name: Check file sizes
+        run: |
+          ls -lh output/*.run
 
       - name: Upload to GitHub Release
         uses: softprops/action-gh-release@v2.1.0
         with:
           tag_name: "sirpdboy-latest"
           name: "sirpdboy plugins (all-arch)"
-          body: "sirpdboy plugins: advancedplus, netwizard, partexp, kucat, taskplan, watchdog"
+          body: |
+            sirpdboy plugins: advancedplus, netwizard, partexp, kucat, taskplan, watchdog
+
+            分包策略:
+            - sirpdboy_*_ipk_all.run → 24.10 构建 (opkg 安装 .ipk)
+            - sirpdboy_*_apk_all.run → 25.12 构建 (apk 安装 .ipk 兼容)
+
+            文件名标识:
+            - _ipk_ → 仅供 24.10 抓取
+            - _apk_ → 仅供 25.12 抓取
           files: output/*.run
           token: ${{ secrets.GITHUB_TOKEN }}
         env:

@@ -13,60 +13,112 @@ jobs:
       - name: Install makeself
         run: sudo apt-get update && sudo apt-get install -y makeself curl jq
 
-      - name: Download luci-app-amlogic from GitHub releases
+      - name: Download 24.10 ipks
         run: |
-          mkdir -p aarch64_cortex-a53
+          mkdir -p ipk-aarch64
           
-          # 获取最新 release 信息
+          # 从 GitHub release 下载
           RELEASE_INFO=$(curl -s https://api.github.com/repos/ophub/luci-app-amlogic/releases/latest)
-          
-          # 下载所有 ipk 文件
           echo "$RELEASE_INFO" | grep -oP '"browser_download_url":\s*"\K[^"]*\.ipk' | while read -r URL; do
             if [ -n "$URL" ]; then
-              echo "⬇️ 下载: $(basename $URL)"
-              curl -sL -o "aarch64_cortex-a53/$(basename $URL)" "$URL"
+              echo "⬇️ (24.10): $(basename $URL)"
+              curl -sL -o "ipk-aarch64/$(basename $URL)" "$URL"
             fi
           done
           
-          # 也尝试从 dl.openwrt.ai 下载
+          # 也从 dl.openwrt.ai 补充下载
           BASE_URL="https://dl.openwrt.ai/packages-24.10/aarch64_cortex-a53/kiddin9/"
           page=$(curl -s "$BASE_URL")
           for prefix in luci-app-amlogic; do
             match=$(echo "$page" | grep -oP 'href="\K[^"]+\.ipk' | grep "^${prefix}_" | head -n1)
             if [ -n "$match" ]; then
-              echo "⬇️ 从 dl.openwrt.ai 下载: $match"
-              curl -sL -o "aarch64_cortex-a53/${match}" "${BASE_URL}${match}"
+              echo "⬇️ 从 dl.openwrt.ai 下载 (24.10): $match"
+              curl -sL -o "ipk-aarch64/${match}" "${BASE_URL}${match}"
             fi
           done
           
-          ls -lh aarch64_cortex-a53/
+          ls -lh ipk-aarch64/
 
-      - name: Create install.sh and pack
+      - name: Download 25.12 packages
         run: |
-          cat <<EOF > aarch64_cortex-a53/install.sh
+          mkdir -p apk-aarch64
+          
+          # 从 GitHub release 下载（ipk 格式，25.12 兼容）
+          RELEASE_INFO=$(curl -s https://api.github.com/repos/ophub/luci-app-amlogic/releases/latest)
+          echo "$RELEASE_INFO" | grep -oP '"browser_download_url":\s*"\K[^"]*\.ipk' | while read -r URL; do
+            if [ -n "$URL" ]; then
+              echo "⬇️ (25.12): $(basename $URL)"
+              curl -sL -o "apk-aarch64/$(basename $URL)" "$URL"
+            fi
+          done
+          
+          # 也从 dl.openwrt.ai 补充下载
+          BASE_URL="https://dl.openwrt.ai/packages-25.12/aarch64_cortex-a53/kiddin9/"
+          page=$(curl -s "$BASE_URL")
+          for prefix in luci-app-amlogic; do
+            match=$(echo "$page" | grep -oP 'href="\K[^"]+\.ipk' | grep "^${prefix}_" | head -n1)
+            if [ -n "$match" ]; then
+              echo "⬇️ 从 dl.openwrt.ai 下载 (25.12): $match"
+              curl -sL -o "apk-aarch64/${match}" "${BASE_URL}${match}"
+            fi
+          done
+          
+          ls -lh apk-aarch64/
+
+      - name: Clone makeself and pack ipk (24.10)
+        run: |
+          git clone https://github.com/megastep/makeself.git
+          mkdir -p output
+          VERSION=$(date -u -d '+8 hour' +'%Y-%m-%d')
+
+          cat <<'EOF' > ipk-aarch64/install.sh
           #!/bin/sh
           opkg update
-          if [ \$? -ne 0 ]; then
+          if [ $? -ne 0 ]; then
               echo "update failed"
               exit 1
           fi
           opkg install *.ipk --force-depends
           EOF
-          chmod +x aarch64_cortex-a53/install.sh
-          
-          git clone https://github.com/megastep/makeself.git
-          mkdir -p output
-          VERSION=$(date -u -d '+8 hour' +'%Y-%m-%d')
+          chmod +x ipk-aarch64/install.sh
+          mv ipk-aarch64 makeself/
           cd makeself
-          mv ../aarch64_cortex-a53 .
-          ./makeself.sh aarch64_cortex-a53/ ../output/amlogic_${VERSION}_aarch64_cortex-a53.run "Amlogic aarch64 v${VERSION}" ./install.sh
+          ./makeself.sh ipk-aarch64/ ../output/amlogic_${VERSION}_ipk_aarch64_cortex-a53.run "Amlogic aarch64 v${VERSION} (ipk for 24.10)" ./install.sh
+          cd ..
+
+      - name: Pack apk (25.12)
+        run: |
+          VERSION=$(date -u -d '+8 hour' +'%Y-%m-%d')
+
+          cat <<'EOF' > apk-aarch64/install.sh
+          #!/bin/sh
+          apk add --no-cache --allow-untrusted *.ipk 2>/dev/null || opkg install *.ipk --force-depends
+          EOF
+          chmod +x apk-aarch64/install.sh
+          mv apk-aarch64 makeself/
+          cd makeself
+          ./makeself.sh apk-aarch64/ ../output/amlogic_${VERSION}_apk_aarch64_cortex-a53.run "Amlogic aarch64 v${VERSION} (apk for 25.12)" ./install.sh
+          cd ..
+
+      - name: Check file sizes
+        run: |
+          ls -lh output/*.run
 
       - name: Upload to GitHub Release
         uses: softprops/action-gh-release@v2.1.0
         with:
           tag_name: "Amlogic"
           name: "Amlogic-latest (aarch64 only)"
-          body: "luci-app-amlogic 晶晨宝盒 (仅限 ARM-64 平台)"
+          body: |
+            luci-app-amlogic 晶晨宝盒 (仅限 ARM-64 平台)
+
+            分包策略:
+            - amlogic_*_ipk_*.run → 24.10 构建 (opkg 安装 .ipk)
+            - amlogic_*_apk_*.run → 25.12 构建 (apk 安装 .ipk 兼容)
+
+            文件名标识:
+            - _ipk_ → 仅供 24.10 抓取
+            - _apk_ → 仅供 25.12 抓取
           files: output/*.run
           token: ${{ secrets.GITHUB_TOKEN }}
         env:

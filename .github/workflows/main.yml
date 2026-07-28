@@ -1,10 +1,7 @@
 #=================================================
 # https://github.com/wukongdaily/RunFilesBuilder
-# Modified by Shaw-fung: added arm_cortex-a7_neon-vfpv4 support + daily cron
-# Description: Build RunFiles using GitHub Actions
-# Lisence: MIT
-# Author: wukongdaily
-# Blog: wkdaily.cpolar.cn
+# Modified: split ipk/apk packages for 24.10/25.12
+# Source: Openwrt-Passwall (luci-app) + dl.openwrt.ai (depends)
 #=================================================
 
 name: Make Passwall run files
@@ -31,142 +28,204 @@ jobs:
       - name: Clone makeself repository
         run: git clone https://github.com/megastep/makeself.git
 
-      - name: Download latest Passwall files
+      - name: 下载 24.10 ipk 依赖 + luci-app
         run: |
-          mkdir -p downloads
-          cd downloads
-          # 下载依赖ipk
-          curl -L -o passwall_packages_ipk_x86_64.zip https://github.com/wkccd/storage/releases/download/pw/passwall_packages_ipk_x86_64.zip
-          curl -L -o passwall_packages_ipk_aarch64_cortex-a53.zip https://github.com/wkccd/storage/releases/download/pw/passwall_packages_ipk_aarch64_cortex-a53.zip
-          # 下载主程序luci
-          curl -LO "$(
-            curl -s https://api.github.com/repos/Openwrt-Passwall/openwrt-passwall/releases/latest \
-            | grep -oP '"browser_download_url":\s*"\K[^"]*23\.05-24\.10_luci-app-passwall_.*_all\.ipk'
-          )"
-          # 下载简体中文语言包
-          curl -L -O "$(
-            curl -s https://api.github.com/repos/Openwrt-Passwall/openwrt-passwall/releases/latest \
-            | jq -r '.assets[]
-              | select(.name | test("^23.05-24.10_luci-i18n-passwall-zh-cn_.*\\.ipk$"))
-              | .browser_download_url'
-          )"
-
-      - name: Organize files for x86_64
-        run: |
-          mkdir -p passwall_x86_64/depends passwall_x86_64/main
-          unzip downloads/passwall_packages_ipk_x86_64.zip -d passwall_x86_64/depends
-          rm downloads/passwall_packages_ipk_x86_64.zip
-          cp downloads/23*.ipk passwall_x86_64/main/
-      - name: Organize files for aarch64_cortex-a53
-        run: |
-          mkdir -p passwall_aarch64/depends passwall_aarch64/main
-          unzip downloads/passwall_packages_ipk_aarch64_cortex-a53.zip -d passwall_aarch64/depends
-          rm downloads/passwall_packages_ipk_aarch64_cortex-a53.zip
-          cp downloads/23*.ipk passwall_aarch64/main/
-
-      - name: Organize files for arm_cortex-a7_neon-vfpv4
-        run: |
-          mkdir -p passwall_arm/depends passwall_arm/main
-          PACKAGE_VERSION="packages-24.10"
-          BASE_URL="https://dl.openwrt.ai/${PACKAGE_VERSION}/arm_cortex-a7_neon-vfpv4/kiddin9/"
-          echo "Fetching arm directory page from $BASE_URL"
           FILE_PREFIXES=("passwall" "chinadns-ng" "dns2socks" "hysteria" "ipt2socks" "microsocks" "naiveproxy" "redsocks2" "shadowsocksr-libev" "shadowsocks-rust" "shadow-tls" "simple-obfs-client" "tcping" "trojan" "tuic-client" "v2ray-plugin" "xray-core" "dns2tcp" "lua-neturl" "mosdns" "shadowsocks-libev-ss-server")
           EXCLUDE_PREFIXES=("luci-app-chinadns-ng" "luci-app-microsocks" "luci-app-mosdns" "luci-app-naiveproxy" "luci-app-redsocks2" "luci-app-shadowsocks")
-          wget -qO- "$BASE_URL" | \
-          while IFS= read -r LINE; do
-              for PREFIX in "${FILE_PREFIXES[@]}"; do
-                  if [[ "$LINE" == *"$PREFIX"* ]]; then
-                      FILE=$(echo "$LINE" | grep -oP 'href="\K[^"]*')
-                      if [[ -z "$FILE" ]]; then
-                          continue
-                      fi
-                      exclude_file=false
-                      for exclude_prefix in "${EXCLUDE_PREFIXES[@]}"; do
-                          if [[ "$FILE" == $exclude_prefix* ]]; then
-                              exclude_file=true
-                              break
-                          fi
-                      done
-                      if $exclude_file; then
-                          echo "Skip file: $FILE"
-                          continue
-                      fi
-                      FILE_URL="${BASE_URL}${FILE}"
-                      echo "Found file: $FILE_URL"
-                      curl -L --fail "$FILE_URL" -o "passwall_arm/depends/$(basename $FILE_URL)" -#
-                    fi
-              done
-          done
-          cp downloads/23*.ipk passwall_arm/main/
 
-      - name: Create install.sh scripts
+          for ARCH in x86_64 aarch64_cortex-a53 arm_cortex-a7_neon-vfpv4; do
+            mkdir -p "ipk-$ARCH/depends" "ipk-$ARCH/main"
+            BASE_URL="https://dl.openwrt.ai/packages-24.10/${ARCH}/kiddin9/"
+            echo "Fetching $ARCH kiddin9 from $BASE_URL"
+            page=$(wget -qO- "$BASE_URL")
+            while IFS= read -r LINE; do
+              for PREFIX in "${FILE_PREFIXES[@]}"; do
+                if [[ "$LINE" == *"$PREFIX"* ]]; then
+                  FILE=$(echo "$LINE" | grep -oP 'href="\K[^"]*')
+                  [[ -z "$FILE" ]] && continue
+                  exclude_file=false
+                  for exclude_prefix in "${EXCLUDE_PREFIXES[@]}"; do
+                    if [[ "$FILE" == $exclude_prefix* ]]; then
+                      exclude_file=true
+                      break
+                    fi
+                  done
+                  if $exclude_file; then
+                    continue
+                  fi
+                  FILE_URL="${BASE_URL}${FILE}"
+                  echo "⬇️ $ARCH (24.10): $FILE"
+                  curl -sL --fail "$FILE_URL" -o "ipk-${ARCH}/depends/$(basename $FILE_URL)"
+                fi
+              done
+            done <<< "$page"
+
+            # 处理 ~ 字符
+            pushd "ipk-$ARCH/depends" >/dev/null
+            for f in *~*.ipk; do
+              [ -e "$f" ] || continue
+              new_f=$(echo "$f" | tr '~' '-')
+              [ "$f" != "$new_f" ] && mv "$f" "$new_f"
+            done
+            popd >/dev/null
+          done
+
+          # 下载 luci-app (24.10 ipk 版)
+          RELEASE_INFO=$(curl -s https://api.github.com/repos/Openwrt-Passwall/openwrt-passwall/releases/latest)
+          LUCI_URL=$(echo "$RELEASE_INFO" | jq -r '.assets[] | select(.name | test("^23\\.05-24\\.10_luci-app-passwall_.*\\.ipk$")) | .browser_download_url' | head -1)
+          I18N_URL=$(echo "$RELEASE_INFO" | jq -r '.assets[] | select(.name | test("^23\\.05-24\\.10_luci-i18n-passwall-zh-cn_.*\\.ipk$")) | .browser_download_url' | head -1)
+          for ARCH in x86_64 aarch64_cortex-a53 arm_cortex-a7_neon-vfpv4; do
+            if [ -n "$LUCI_URL" ]; then
+              echo "⬇️ luci-app-passwall (ipk): $(basename $LUCI_URL)"
+              curl -sL -o "ipk-$ARCH/main/$(basename $LUCI_URL)" "$LUCI_URL"
+            fi
+            if [ -n "$I18N_URL" ]; then
+              echo "⬇️ luci-i18n-passwall-zh-cn (ipk): $(basename $I18N_URL)"
+              curl -sL -o "ipk-$ARCH/main/$(basename $I18N_URL)" "$I18N_URL"
+            fi
+          done
+
+      - name: 下载 25.12 apk 依赖 + luci-app
         run: |
-          cat <<EOF > passwall_x86_64/install.sh
+          FILE_PREFIXES=("passwall" "chinadns-ng" "dns2socks" "hysteria" "ipt2socks" "microsocks" "naiveproxy" "redsocks2" "shadowsocksr-libev" "shadowsocks-rust" "shadow-tls" "simple-obfs-client" "tcping" "trojan" "tuic-client" "v2ray-plugin" "xray-core" "dns2tcp" "lua-neturl" "mosdns" "shadowsocks-libev-ss-server")
+          EXCLUDE_PREFIXES=("luci-app-chinadns-ng" "luci-app-microsocks" "luci-app-mosdns" "luci-app-naiveproxy" "luci-app-redsocks2" "luci-app-shadowsocks")
+
+          for ARCH in x86_64 aarch64_cortex-a53 arm_cortex-a7_neon-vfpv4; do
+            mkdir -p "apk-$ARCH/depends" "apk-$ARCH/main"
+            BASE_URL="https://dl.openwrt.ai/packages-25.12/${ARCH}/kiddin9/"
+            echo "Fetching $ARCH kiddin9 from $BASE_URL"
+            page=$(wget -qO- "$BASE_URL")
+            while IFS= read -r LINE; do
+              for PREFIX in "${FILE_PREFIXES[@]}"; do
+                if [[ "$LINE" == *"$PREFIX"* ]]; then
+                  FILE=$(echo "$LINE" | grep -oP 'href="\K[^"]*')
+                  [[ -z "$FILE" ]] && continue
+                  exclude_file=false
+                  for exclude_prefix in "${EXCLUDE_PREFIXES[@]}"; do
+                    if [[ "$FILE" == $exclude_prefix* ]]; then
+                      exclude_file=true
+                      break
+                    fi
+                  done
+                  if $exclude_file; then
+                    continue
+                  fi
+                  FILE_URL="${BASE_URL}${FILE}"
+                  echo "⬇️ $ARCH (25.12): $FILE"
+                  curl -sL --fail "$FILE_URL" -o "apk-${ARCH}/depends/$(basename $FILE_URL)"
+                fi
+              done
+            done <<< "$page"
+
+            # 处理 ~ 字符
+            pushd "apk-$ARCH/depends" >/dev/null
+            for f in *~*.ipk; do
+              [ -e "$f" ] || continue
+              new_f=$(echo "$f" | tr '~' '-')
+              [ "$f" != "$new_f" ] && mv "$f" "$new_f"
+            done
+            popd >/dev/null
+          done
+
+          # 下载 luci-app (25.12 apk 版)
+          RELEASE_INFO=$(curl -s https://api.github.com/repos/Openwrt-Passwall/openwrt-passwall/releases/latest)
+          LUCI_URL=$(echo "$RELEASE_INFO" | jq -r '.assets[] | select(.name | test("^25\\.12.*luci-app-passwall.*\\.apk$")) | .browser_download_url' | head -1)
+          I18N_URL=$(echo "$RELEASE_INFO" | jq -r '.assets[] | select(.name | test("^25\\.12.*luci-i18n-passwall-zh-cn.*\\.apk$")) | .browser_download_url' | head -1)
+          for ARCH in x86_64 aarch64_cortex-a53 arm_cortex-a7_neon-vfpv4; do
+            if [ -n "$LUCI_URL" ]; then
+              echo "⬇️ luci-app-passwall (apk): $(basename $LUCI_URL)"
+              curl -sL -o "apk-$ARCH/main/$(basename $LUCI_URL)" "$LUCI_URL"
+            fi
+            if [ -n "$I18N_URL" ]; then
+              echo "⬇️ luci-i18n-passwall-zh-cn (apk): $(basename $I18N_URL)"
+              curl -sL -o "apk-$ARCH/main/$(basename $I18N_URL)" "$I18N_URL"
+            fi
+          done
+
+      - name: 创建 install.sh 并打包
+        run: |
+          mkdir -p output
+
+          # ipk 包 (24.10)
+          for ARCH in x86_64 aarch64_cortex-a53 arm_cortex-a7_neon-vfpv4; do
+            if [ -z "$(ls -A ipk-$ARCH/main/*.ipk 2>/dev/null)" ]; then
+              echo "⚠️ $ARCH (ipk): no main package, skip"
+              continue
+            fi
+            cat <<'EOF' > "ipk-$ARCH/install.sh"
           #!/bin/sh
           opkg update
           if [ $? -ne 0 ]; then
-              echo "update failed。"
+              echo "update failed"
               exit 1
           fi
           opkg install iptables-mod-tproxy
           opkg install iptables-mod-socket
           opkg install iptables-mod-iprange
           opkg install iptables-mod-conntrack-extra
-          opkg install depends/*.ipk
-          opkg install main/*.ipk
+          opkg install depends/*.ipk --force-depends
+          opkg install main/*.ipk --force-depends
           EOF
-          chmod +x passwall_x86_64/install.sh
-          cp passwall_x86_64/install.sh passwall_aarch64/install.sh
-          cp passwall_x86_64/install.sh passwall_arm/install.sh
+            chmod +x "ipk-$ARCH/install.sh"
+            cp -r "ipk-$ARCH" makeself/
+            cd makeself
+            ./makeself.sh "ipk-$ARCH/" "../output/passwall_${LATEST_TAG}_ipk_${ARCH}.run" "passwall ${ARCH} v${LATEST_TAG} (ipk for 24.10)" ./install.sh
+            cd ..
+          done
 
-      - name: Move passwall directories to makeself
-        run: |
-          mv passwall_x86_64 makeself/
-          mv passwall_aarch64 makeself/
-          mv passwall_arm makeself/
-
-      - name: Create self-extracting packages
-        run: |
-          cd makeself
-          ./makeself.sh passwall_x86_64/ passwall_x86_64_${{ env.LATEST_TAG }}.run "by github action" ./install.sh
-          ./makeself.sh passwall_aarch64/ passwall_aarch64_a53_${{ env.LATEST_TAG }}.run "by github action" ./install.sh
-          ./makeself.sh passwall_arm/ passwall_arm_cortex-a7_neon-vfpv4_${{ env.LATEST_TAG }}.run "by github action" ./install.sh
+          # apk 包 (25.12)
+          for ARCH in x86_64 aarch64_cortex-a53 arm_cortex-a7_neon-vfpv4; do
+            if [ -z "$(ls -A apk-$ARCH/main/*.apk 2>/dev/null)" ]; then
+              echo "⚠️ $ARCH (apk): no main package, skip"
+              continue
+            fi
+            cat <<'EOF' > "apk-$ARCH/install.sh"
+          #!/bin/sh
+          if command -v apk >/dev/null 2>&1; then
+            apk add --no-cache --allow-untrusted depends/*.ipk main/*.apk 2>/dev/null || true
+          else
+            opkg update
+            opkg install iptables-mod-tproxy 2>/dev/null || true
+            opkg install iptables-mod-socket 2>/dev/null || true
+            opkg install iptables-mod-iprange 2>/dev/null || true
+            opkg install iptables-mod-conntrack-extra 2>/dev/null || true
+            opkg install depends/*.ipk --force-depends
+            opkg install main/*.apk --force-depends 2>/dev/null || true
+          fi
+          EOF
+            chmod +x "apk-$ARCH/install.sh"
+            cp -r "apk-$ARCH" makeself/
+            cd makeself
+            ./makeself.sh "apk-$ARCH/" "../output/passwall_${LATEST_TAG}_apk_${ARCH}.run" "passwall ${ARCH} v${LATEST_TAG} (apk for 25.12)" ./install.sh
+            cd ..
+          done
 
       - name: Check file sizes
         run: |
-          ls -lh makeself/passwall_*.run
+          ls -lh output/*.run
 
       - name: Preparing release name
         run: |
           release_name=$(TZ="Asia/Shanghai" date +'%Y-%m-%d %H:%M Build')
           echo "RELEASE_NAME=$release_name" >> $GITHUB_ENV
 
-      - name: Fetch latest release details
-        id: fetch_release_details
-        run: |
-          extra_content="![Github](https://img.shields.io/badge/Passwall.run-123456?logo=github&logoColor=fff&labelColor=green&style=for-the-badge) [![Github](https://img.shields.io/badge/国内加速站下载-FC7C0D?logo=github&logoColor=fff&labelColor=000&style=for-the-badge)](https://wkdaily.cpolar.cn/archives/1) ![GitHub Downloads (all assets, specific tag)](https://img.shields.io/github/downloads/wukongdaily/RunFilesBuilder/${{ env.LATEST_TAG }}/total?style=for-the-badge&labelColor=black&color=%2325c2a0)"
-          echo -e "$extra_content" > release_notes.md
-
-      - name: Print release notes
-        run: |
-          cat release_notes.md
-
       - name: Generate new tag & release
-        uses: softprops/action-gh-release@master
+        uses: softprops/action-gh-release@v2.1.0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          tag_name: ${{ env.LATEST_TAG }}
-          target_commitish: ${{ github.ref_name }}
-          prerelease: false
-          body_path: release_notes.md
-
-      - name: Upload run files as release assets
-        uses: softprops/action-gh-release@v2.1.0
         with:
           tag_name: ${{ env.LATEST_TAG }}
           name: "PassWall-${{ env.LATEST_TAG }}"
-          files: makeself/passwall_*.run
-          token: ${{ secrets.GITHUB_TOKEN }}
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          body: |
+            PassWall (luci-app-passwall)
+
+            分包策略:
+            - passwall_*_ipk_*.run → 24.10 构建 (opkg 安装 .ipk)
+            - passwall_*_apk_*.run → 25.12 构建 (apk 安装)
+
+            文件名标识:
+            - _ipk_ → 仅供 24.10 抓取
+            - _apk_ → 仅供 25.12 抓取
+
+            源: Openwrt-Passwall (luci-app) + dl.openwrt.ai (kiddin9 feed 依赖)
+          files: output/*.run

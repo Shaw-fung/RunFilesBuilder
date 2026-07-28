@@ -1,7 +1,7 @@
 #=================================================
 # https://github.com/wukongdaily/RunFilesBuilder
-# Modified by Shaw-fung: added arm_cortex-a7_neon-vfpv4 support + daily cron
-# Description: Build RunFiles using GitHub Actions
+# Modified: split ipk/apk packages for 24.10/25.12
+# Description: Build AdGuardHome RunFiles
 # Lisence: MIT
 # Author: wukongdaily
 # Blog: wkdaily.cpolar.cn
@@ -26,67 +26,73 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v3
-    
-      - name: set PACKAGE_VERSION
-        run: |
-          package_version="${{ github.event.inputs.package_version }}"
-          if [ -z "$package_version" ]; then
-            package_version="packages-24.10"
-          fi
-          echo "PACKAGE_VERSION=$package_version" >> $GITHUB_ENV
-      
+
       - name: Fetch latest release tag from AdGuardHome
         id: fetch_latest_tag
         run: |
           latest_tag=$(curl -s https://api.github.com/repos/AdguardTeam/AdGuardHome/releases/latest | jq -r '.tag_name')
           echo "LATEST_TAG=$latest_tag" >> $GITHUB_ENV
-          # https://github.com/AdguardTeam/AdGuardHome/releases/download/v0.107.55/AdGuardHome_linux_arm64.tar.gz
 
       - name: Clone makeself repository
         run: git clone https://github.com/megastep/makeself.git
 
-      - name: Download latest AdGuardHome files
+      - name: Download latest AdGuardHome binaries
         run: |
           curl -LO "https://github.com/AdguardTeam/AdGuardHome/releases/download/${{ env.LATEST_TAG }}/AdGuardHome_linux_armv7.tar.gz"
           tar --one-top-level=AdGuardHome_aarch32 -xvzf AdGuardHome_linux_armv7.tar.gz
-          echo "AdGuardHome_aarch32 List"
-          ls AdGuardHome_aarch32
           
           curl -LO "https://github.com/AdguardTeam/AdGuardHome/releases/download/${{ env.LATEST_TAG }}/AdGuardHome_linux_arm64.tar.gz"
           tar --one-top-level=AdGuardHome_aarch64 -xvzf AdGuardHome_linux_arm64.tar.gz
-          echo "AdGuardHome_aarch64 List"
-          ls AdGuardHome_aarch64
           
           curl -LO "https://github.com/AdguardTeam/AdGuardHome/releases/download/${{ env.LATEST_TAG }}/AdGuardHome_linux_amd64.tar.gz"
           tar --one-top-level=AdGuardHome_x86_64 -xvzf AdGuardHome_linux_amd64.tar.gz
-          echo "AdGuardHome_x86_64 List"
-          ls AdGuardHome_x86_64
 
-      - name: Download luci-app-adguardhome IPK files
-        run: | 
-          ARCHITECTURES=(
-          "AdGuardHome_aarch32=https://dl.openwrt.ai/$PACKAGE_VERSION/arm_cortex-a7/kiddin9/"
-          "AdGuardHome_aarch64=https://dl.openwrt.ai/$PACKAGE_VERSION/aarch64_cortex-a53/kiddin9/"
-          "AdGuardHome_x86_64=https://dl.openwrt.ai/$PACKAGE_VERSION/x86_64/kiddin9/")
-
-          for ARCH_MAPPING in "${ARCHITECTURES[@]}"; do
-            ARCH=$(echo "$ARCH_MAPPING" | cut -d= -f1)
-            TARGET_URL=$(echo "$ARCH_MAPPING" | cut -d= -f2)
-            mkdir -p "$ARCH"
-
-          # 下载固定的 luci-app-adguardhome-all.ipk 到该目录 这版本luci界面最好用 而且每次变化的仅仅是内核
-            curl -L -o "$ARCH/luci-app-adguardhome-all.ipk" \
-              "https://github.com/wukongdaily/RunFilesBuilder/releases/download/AdGuardHome_v0.107.55/luci-app-adguardhome-all.ipk"
-
-            echo "==> Downloaded for $ARCH:"
-            ls -lh "$ARCH/luci-app-adguardhome-all.ipk"
-            file "$ARCH/luci-app-adguardhome-all.ipk"
-            echo ""
-          done
- 
-      - name: Create install.sh scripts
+      - name: Download 24.10 luci-app-adguardhome IPK files
         run: |
-          cat <<EOF > AdGuardHome_x86_64/install.sh
+          for ARCH in arm_cortex-a7_neon-vfpv4 aarch64_cortex-a53 x86_64; do
+            BASE_URL="https://dl.openwrt.ai/packages-24.10/${ARCH}/kiddin9/"
+            page_content=$(curl -s "$BASE_URL")
+            match=$(echo "$page_content" | grep -oP 'href="\K[^"]+\.ipk' | grep "^luci-app-adguardhome_" | head -n1)
+            if [ -n "$match" ]; then
+              echo "⬇️ $ARCH (24.10): $match"
+              curl -sL -o "AdGuardHome_${ARCH}/${match}" "${BASE_URL}${match}"
+            else
+              # 回退到旧版本固定 ipk
+              echo "⚠️ $ARCH: 未找到最新版,使用固定版本"
+              curl -L -o "AdGuardHome_${ARCH}/luci-app-adguardhome-all.ipk" \
+                "https://github.com/wukongdaily/RunFilesBuilder/releases/download/AdGuardHome_v0.107.55/luci-app-adguardhome-all.ipk"
+            fi
+          done
+
+      - name: Download 25.12 luci-app-adguardhome IPK files (apk-installable)
+        run: |
+          # 25.12 的包从 packages-25.12 下载, ipk 格式,apk add 可安装
+          for ARCH in arm_cortex-a7_neon-vfpv4 aarch64_cortex-a53 x86_64; do
+            mkdir -p "AdGuardHome_apk_${ARCH}"
+            # 复制二进制
+            cp -r "AdGuardHome_${ARCH}/AdGuardHome" "AdGuardHome_apk_${ARCH}/" 2>/dev/null || true
+            # 复制所有非 ipk 内容
+            for f in "AdGuardHome_${ARCH}"/*; do
+              [ -f "$f" ] && [ "${f##*.}" != "ipk" ] && cp "$f" "AdGuardHome_apk_${ARCH}/"
+            done
+            # 下载 25.12 版本的 ipk
+            BASE_URL="https://dl.openwrt.ai/packages-25.12/${ARCH}/kiddin9/"
+            page_content=$(curl -s "$BASE_URL")
+            match=$(echo "$page_content" | grep -oP 'href="\K[^"]+\.ipk' | grep "^luci-app-adguardhome_" | head -n1)
+            if [ -n "$match" ]; then
+              echo "⬇️ $ARCH (25.12): $match"
+              curl -sL -o "AdGuardHome_apk_${ARCH}/${match}" "${BASE_URL}${match}"
+            else
+              echo "⚠️ $ARCH: 未找到 25.12 版本,使用固定版本"
+              curl -L -o "AdGuardHome_apk_${ARCH}/luci-app-adguardhome-all.ipk" \
+                "https://github.com/wukongdaily/RunFilesBuilder/releases/download/AdGuardHome_v0.107.55/luci-app-adguardhome-all.ipk"
+            fi
+          done
+
+      - name: Create install.sh scripts (ipk 24.10)
+        run: |
+          for ARCH in x86_64 aarch64 aarch32; do
+            cat <<EOF > AdGuardHome_${ARCH}/install.sh
           #!/bin/sh
           opkg update
           if [ \$? -ne 0 ]; then
@@ -103,44 +109,73 @@ jobs:
           cp AdGuardHome/AdGuardHome /usr/bin/AdGuardHome
           chmod +x /usr/bin/AdGuardHome
           EOF
-          chmod +x AdGuardHome_x86_64/install.sh
-          cp AdGuardHome_x86_64/install.sh AdGuardHome_aarch64/install.sh
-          cp AdGuardHome_x86_64/install.sh AdGuardHome_aarch32/install.sh
-          
-      - name: Move AdGuardHome directories to makeself
+            chmod +x AdGuardHome_${ARCH}/install.sh
+          done
+
+      - name: Create install.sh scripts (apk 25.12)
         run: |
+          for ARCH in x86_64 aarch64 aarch32; do
+            cat <<EOF > AdGuardHome_apk_${ARCH}/install.sh
+          #!/bin/sh
+          # install luci-app-adguardhome (apk mode first, fallback to opkg)
+          echo "Installing luci-app-adguardhome"
+          if command -v apk >/dev/null 2>&1; then
+            apk add --no-cache --allow-untrusted *.ipk 2>/dev/null || true
+          else
+            opkg update
+            opkg install *.ipk --force-depends
+          fi
+          # update latest AdGuardHome Core
+          cp AdGuardHome/AdGuardHome /usr/bin/AdGuardHome
+          chmod +x /usr/bin/AdGuardHome
+          EOF
+            chmod +x AdGuardHome_apk_${ARCH}/install.sh
+          done
+
+      - name: Move directories to makeself and pack
+        run: |
+          mkdir -p output
           mv AdGuardHome_x86_64 makeself/
           mv AdGuardHome_aarch64 makeself/
           mv AdGuardHome_aarch32 makeself/
+          mv AdGuardHome_apk_x86_64 makeself/
+          mv AdGuardHome_apk_aarch64 makeself/
+          mv AdGuardHome_apk_aarch32 makeself/
 
-      - name: Create self-extracting packages
-        run: |
           cd makeself
-          ./makeself.sh AdGuardHome_x86_64/ AdGuardHome_${{ env.LATEST_TAG }}_x86_64.run "by wukongdaily github action" ./install.sh
-          ./makeself.sh AdGuardHome_aarch64/ AdGuardHome_${{ env.LATEST_TAG }}_aarch64.run "by wukongdaily github action" ./install.sh
-          ./makeself.sh AdGuardHome_aarch32/ AdGuardHome_${{ env.LATEST_TAG }}_aarch32.run "by wukongdaily github action" ./install.sh
+          # ipk 分包 (24.10)
+          ./makeself.sh AdGuardHome_x86_64/ ../output/AdGuardHome_${{ env.LATEST_TAG }}_ipk_x86_64.run "AdGuardHome ${{ env.LATEST_TAG }} x86_64 (ipk for 24.10)" ./install.sh
+          ./makeself.sh AdGuardHome_aarch64/ ../output/AdGuardHome_${{ env.LATEST_TAG }}_ipk_aarch64.run "AdGuardHome ${{ env.LATEST_TAG }} aarch64 (ipk for 24.10)" ./install.sh
+          ./makeself.sh AdGuardHome_aarch32/ ../output/AdGuardHome_${{ env.LATEST_TAG }}_ipk_aarch32.run "AdGuardHome ${{ env.LATEST_TAG }} aarch32 (ipk for 24.10)" ./install.sh
           
+          # apk 分包 (25.12)
+          ./makeself.sh AdGuardHome_apk_x86_64/ ../output/AdGuardHome_${{ env.LATEST_TAG }}_apk_x86_64.run "AdGuardHome ${{ env.LATEST_TAG }} x86_64 (apk for 25.12)" ./install.sh
+          ./makeself.sh AdGuardHome_apk_aarch64/ ../output/AdGuardHome_${{ env.LATEST_TAG }}_apk_aarch64.run "AdGuardHome ${{ env.LATEST_TAG }} aarch64 (apk for 25.12)" ./install.sh
+          ./makeself.sh AdGuardHome_apk_aarch32/ ../output/AdGuardHome_${{ env.LATEST_TAG }}_apk_aarch32.run "AdGuardHome ${{ env.LATEST_TAG }} aarch32 (apk for 25.12)" ./install.sh
+
       - name: Check file sizes
         run: |
-          ls -lh makeself/AdGuardHome_*.run
-
-      - name: Fetch latest release details
-        id: fetch_release_details
-        run: |
-          extra_content="![Github](https://img.shields.io/badge/AdGuardHome.run-123456?logo=github&logoColor=fff&labelColor=8470FF&style=for-the-badge) [![Github](https://img.shields.io/badge/国内加速站下载-FC7C0D?logo=github&logoColor=fff&labelColor=000&style=for-the-badge)](https://wkdaily.cpolar.cn/archives/1) ![GitHub Downloads (all assets, specific tag)](https://img.shields.io/github/downloads/wukongdaily/RunFilesBuilder/AdGuardHome_${{ env.LATEST_TAG }}/total?style=for-the-badge&labelColor=black&color=%2325c2a0)"
-          sed -i "1i$extra_content" "${{ github.workspace }}/info1.md"
-
-      - name: Print release notes
-        run: |
-          cat ${{ github.workspace }}/info1.md
+          ls -lh output/AdGuardHome*.run
 
       - name: Upload run files as release assets
         uses: softprops/action-gh-release@v2.1.0
         with:
           tag_name: AdGuardHome_${{ env.LATEST_TAG }}
           name: "AdGuardHome-${{ env.LATEST_TAG }}"
-          files: makeself/AdGuardHome*.run
-          body_path: ${{ github.workspace }}/info1.md
+          body: |
+            AdGuardHome for OpenWrt / ImmortalWrt
+
+            分包策略:
+            - AdGuardHome_*_ipk_*.run → 24.10 构建 (opkg 安装 .ipk)
+            - AdGuardHome_*_apk_*.run → 25.12 构建 (apk 安装 .ipk 兼容)
+
+            文件名标识:
+            - _ipk_ → 仅供 24.10 抓取
+            - _apk_ → 仅供 25.12 抓取
+
+            核心二进制来自: https://github.com/AdguardTeam/AdGuardHome
+            LuCI 界面来自: dl.openwrt.ai (kiddin9 feed)
+          files: output/AdGuardHome*.run
           token: ${{ secrets.GITHUB_TOKEN }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

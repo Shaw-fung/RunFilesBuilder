@@ -24,27 +24,44 @@ jobs:
       - name: Clone makeself repository
         run: git clone https://github.com/megastep/makeself.git
 
-      - name: Download clashoo ipks for all architectures
+      - name: Download clashoo ipks for all architectures (24.10)
         run: |
           ALL_IPKS=$(curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
             https://api.github.com/repos/kenzok8/openwrt-clashoo/releases/latest \
             | jq -r '.assets[] | select(.name | test("\\.ipk$")) | "\(.name) \(.browser_download_url)"')
-          
+
           for ARCH in x86_64 aarch64_cortex-a53 arm_cortex-a7_neon-vfpv4; do
-            mkdir -p "$ARCH"
+            mkdir -p "ipk-$ARCH"
             echo "$ALL_IPKS" | while read -r name url; do
               if echo "$name" | grep -qE "${ARCH}|_all\\.ipk"; then
-                echo "⬇️ $ARCH: $name"
-                curl -sL -o "${ARCH}/${name}" "$url"
+                echo "⬇️ $ARCH (ipk): $name"
+                curl -sL -o "ipk-$ARCH/$name" "$url"
               fi
             done
-            ls -lh "$ARCH/"
+            ls -lh "ipk-$ARCH/"
           done
 
-      - name: Create install.sh and pack
+      - name: Download clashoo apks for all architectures (25.12)
+        run: |
+          ALL_APKS=$(curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+            https://api.github.com/repos/kenzok8/openwrt-clashoo/releases/latest \
+            | jq -r '.assets[] | select(.name | test("\\.apk$")) | "\(.name) \(.browser_download_url)"')
+
+          for ARCH in x86_64 aarch64_cortex-a53 arm_cortex-a7_neon-vfpv4; do
+            mkdir -p "apk-$ARCH"
+            echo "$ALL_APKS" | while read -r name url; do
+              if echo "$name" | grep -qE "${ARCH}"; then
+                echo "⬇️ $ARCH (apk): $name"
+                curl -sL -o "apk-$ARCH/$name" "$url"
+              fi
+            done
+            ls -lh "apk-$ARCH/" 2>/dev/null || echo "⚠️ $ARCH: no apk found"
+          done
+
+      - name: Create install.sh and pack (ipk 分包 - 24.10)
         run: |
           for ARCH in x86_64 aarch64_cortex-a53 arm_cortex-a7_neon-vfpv4; do
-            cat <<EOF > "$ARCH/install.sh"
+            cat <<EOF > "ipk-$ARCH/install.sh"
           #!/bin/sh
           opkg update
           if [ \$? -ne 0 ]; then
@@ -53,21 +70,60 @@ jobs:
           fi
           opkg install *.ipk --force-depends
           EOF
-            chmod +x "$ARCH/install.sh"
+            chmod +x "ipk-$ARCH/install.sh"
           done
           mkdir -p output
           cd makeself
           for ARCH in x86_64 aarch64_cortex-a53 arm_cortex-a7_neon-vfpv4; do
-            mv ../$ARCH .
-            ./makeself.sh $ARCH/ ../output/clashoo_${{ env.LATEST_TAG }}_${ARCH}.run "Clashoo ${ARCH} v${{ env.LATEST_TAG }}" ./install.sh
+            mv ../ipk-$ARCH .
+            # 文件名含 _ipk_ 标识,供 24.10 (opkg) 构建抓取
+            ./makeself.sh ipk-$ARCH/ ../output/clashoo_${{ env.LATEST_TAG }}_ipk_${ARCH}.run "Clashoo ${ARCH} v${{ env.LATEST_TAG }} (ipk for 24.10)" ./install.sh
           done
+
+      - name: Create install.sh and pack (apk 分包 - 25.12)
+        run: |
+          for ARCH in x86_64 aarch64_cortex-a53 arm_cortex-a7_neon-vfpv4; do
+            if [ -z "$(ls -A apk-$ARCH/ 2>/dev/null)" ]; then
+              echo "⚠️ $ARCH: 无 apk 包,跳过打包"
+              continue
+            fi
+            cat <<EOF > "apk-$ARCH/install.sh"
+          #!/bin/sh
+          apk add --no-cache --allow-untrusted *.apk || true
+          EOF
+            chmod +x "apk-$ARCH/install.sh"
+          done
+          cd makeself
+          for ARCH in x86_64 aarch64_cortex-a53 arm_cortex-a7_neon-vfpv4; do
+            if [ ! -d "../apk-$ARCH" ] || [ -z "$(ls -A ../apk-$ARCH/ 2>/dev/null)" ]; then
+              continue
+            fi
+            mv ../apk-$ARCH .
+            # 文件名含 _apk_ 标识,供 25.12 (apk) 构建抓取
+            ./makeself.sh apk-$ARCH/ ../output/clashoo_${{ env.LATEST_TAG }}_apk_${ARCH}.run "Clashoo ${ARCH} v${{ env.LATEST_TAG }} (apk for 25.12)" ./install.sh
+          done
+
+      - name: Check output
+        run: |
+          ls -lh output/*.run
 
       - name: Upload to GitHub Release
         uses: softprops/action-gh-release@v2.1.0
         with:
           tag_name: "Clashoo"
           name: "Clashoo-latest"
-          body: "Clashoo proxy client for OpenWrt."
+          body: |
+            Clashoo proxy client for OpenWrt.
+
+            分包策略:
+            - clashoo_*_ipk_*.run → 24.10 构建 (opkg 安装 .ipk)
+            - clashoo_*_apk_*.run → 25.12 构建 (apk 安装 .apk)
+
+            文件名标识:
+            - _ipk_ → 仅供 24.10 抓取
+            - _apk_ → 仅供 25.12 抓取
+
+            源仓库: https://github.com/kenzok8/openwrt-clashoo
           files: output/*.run
           token: ${{ secrets.GITHUB_TOKEN }}
         env:

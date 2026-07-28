@@ -12,51 +12,112 @@ jobs:
       - uses: actions/checkout@v3
       - name: Install makeself
         run: sudo apt-get update && sudo apt-get install -y makeself curl
-      - name: Download ipks for all architectures
+
+      - name: Download 24.10 ipks for all architectures
         run: |
-          # 对 x86_64, aarch64_cortex-a53, arm_cortex-a7_neon-vfpv4 分别下载
           for ARCH in x86_64 aarch64_cortex-a53 arm_cortex-a7_neon-vfpv4; do
-            mkdir -p "$ARCH"
+            mkdir -p "ipk-$ARCH"
             BASE_URL="https://dl.openwrt.ai/packages-24.10/${ARCH}/kiddin9/"
             page_content=$(curl -s "$BASE_URL")
             for prefix in luci-app-bandix luci-i18n-bandix-zh-cn; do
               match=$(echo "$page_content" | grep -oP 'href="\K[^"]+\.ipk' | grep "^${prefix}_" | head -n1)
               if [ -n "$match" ]; then
-                echo "⬇️ $ARCH: $match"
-                curl -sL -o "${ARCH}/${match}" "${BASE_URL}${match}"
+                echo "⬇️ $ARCH (24.10): $match"
+                curl -sL -o "ipk-${ARCH}/${match}" "${BASE_URL}${match}"
               else
                 echo "⚠️ $ARCH: not found: $prefix"
               fi
             done
           done
-      - name: Create install.sh and pack
+
+      - name: Download 25.12 packages for all architectures
         run: |
           for ARCH in x86_64 aarch64_cortex-a53 arm_cortex-a7_neon-vfpv4; do
-            cat <<EOF > "$ARCH/install.sh"
+            mkdir -p "apk-$ARCH"
+            BASE_URL="https://dl.openwrt.ai/packages-25.12/${ARCH}/kiddin9/"
+            page_content=$(curl -s "$BASE_URL")
+            for prefix in luci-app-bandix luci-i18n-bandix-zh-cn; do
+              match=$(echo "$page_content" | grep -oP 'href="\K[^"]+\.ipk' | grep "^${prefix}_" | head -n1)
+              if [ -n "$match" ]; then
+                echo "⬇️ $ARCH (25.12): $match"
+                curl -sL -o "apk-${ARCH}/${match}" "${BASE_URL}${match}"
+              else
+                echo "⚠️ $ARCH: not found: $prefix"
+              fi
+            done
+          done
+
+      - name: Create install.sh and pack ipk packages (24.10)
+        run: |
+          for ARCH in x86_64 aarch64_cortex-a53 arm_cortex-a7_neon-vfpv4; do
+            if [ -z "$(ls -A ipk-$ARCH/*.ipk 2>/dev/null)" ]; then
+              echo "⚠️ $ARCH: no ipk packages, skip"
+              continue
+            fi
+            cat <<'EOF' > "ipk-$ARCH/install.sh"
           #!/bin/sh
           opkg update
-          if [ \$? -ne 0 ]; then
+          if [ $? -ne 0 ]; then
               echo "update failed"
               exit 1
           fi
           opkg install *.ipk --force-depends
           EOF
-            chmod +x "$ARCH/install.sh"
+            chmod +x "ipk-$ARCH/install.sh"
           done
           git clone https://github.com/megastep/makeself.git
           mkdir -p output
           VERSION=$(date -u -d '+8 hour' +'%Y-%m-%d')
           cd makeself
           for ARCH in x86_64 aarch64_cortex-a53 arm_cortex-a7_neon-vfpv4; do
-            mv ../$ARCH .
-            ./makeself.sh $ARCH/ ../output/bandix_${VERSION}_${ARCH}.run "Bandix ${ARCH} v${VERSION}" ./install.sh
+            if [ -z "$(ls -A ../ipk-$ARCH/*.ipk 2>/dev/null)" ]; then
+              continue
+            fi
+            mv ../ipk-$ARCH .
+            ./makeself.sh ipk-$ARCH/ ../output/bandix_${VERSION}_ipk_${ARCH}.run "Bandix ${ARCH} v${VERSION} (ipk for 24.10)" ./install.sh
           done
+
+      - name: Create install.sh and pack apk packages (25.12)
+        run: |
+          for ARCH in x86_64 aarch64_cortex-a53 arm_cortex-a7_neon-vfpv4; do
+            if [ -z "$(ls -A apk-$ARCH/*.ipk 2>/dev/null)" ]; then
+              echo "⚠️ $ARCH: no apk packages, skip"
+              continue
+            fi
+            cat <<'EOF' > "apk-$ARCH/install.sh"
+          #!/bin/sh
+          apk add --no-cache --allow-untrusted *.ipk 2>/dev/null || opkg install *.ipk --force-depends
+          EOF
+            chmod +x "apk-$ARCH/install.sh"
+          done
+          cd makeself
+          for ARCH in x86_64 aarch64_cortex-a53 arm_cortex-a7_neon-vfpv4; do
+            if [ -z "$(ls -A ../apk-$ARCH/*.ipk 2>/dev/null)" ]; then
+              continue
+            fi
+            mv ../apk-$ARCH .
+            ./makeself.sh apk-$ARCH/ ../output/bandix_${VERSION}_apk_${ARCH}.run "Bandix ${ARCH} v${VERSION} (apk for 25.12)" ./install.sh
+          done
+
+      - name: Check file sizes
+        run: |
+          ls -lh output/*.run
+
       - name: Upload to GitHub Release
         uses: softprops/action-gh-release@v2.1.0
         with:
           tag_name: "Bandix"
           name: "Bandix-latest"
-          body: "Bandix network monitoring for OpenWrt."
+          body: |
+            Bandix network monitoring for OpenWrt.
+
+            分包策略:
+            - bandix_*_ipk_*.run → 24.10 构建 (opkg 安装 .ipk)
+            - bandix_*_apk_*.run → 25.12 构建 (apk 安装 .ipk 兼容)
+
+            文件名标识:
+            - _ipk_ → 仅供 24.10 抓取
+            - _apk_ → 仅供 25.12 抓取
           files: output/*.run
           token: ${{ secrets.GITHUB_TOKEN }}
         env:

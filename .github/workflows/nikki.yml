@@ -1,13 +1,14 @@
 #=================================================
 # https://github.com/wukongdaily/RunFilesBuilder
 # Modified by Shaw-fung: added arm_cortex-a7_neon-vfpv4 support + daily cron
+# Modified again: split ipk/apk packages for 24.10/25.12
 # Description: Build RunFiles using GitHub Actions
 # Lisence: MIT
 # Author: wukongdaily
 # Blog: wkdaily.cpolar.cn
 #=================================================
 
-name: Make nikki run files for 23.05
+name: Make nikki run files (ipk + apk)
 
 on:
   workflow_dispatch:
@@ -21,86 +22,86 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v3
-      
+
       - name: Fetch latest release tag from nikki
         id: fetch_latest_tag
         run: |
           latest_tag=$(curl -s https://api.github.com/repos/nikkinikki-org/OpenWrt-nikki/releases/latest | jq -r '.tag_name')
-          
           echo "LATEST_TAG=$latest_tag" >> $GITHUB_ENV
-          # https://github.com/nikkinikki-org/OpenWrt-nikki/releases/download/v1.17.5/nikki_aarch64_cortex-a53-openwrt-23.05.tar.gz
 
       - name: Clone makeself repository
         run: git clone https://github.com/megastep/makeself.git
 
-      - name: Download latest nikki files
+      - name: Download 24.10 ipk tar.gz
         run: |
-          curl -LO $(curl -s https://api.github.com/repos/nikkinikki-org/OpenWrt-nikki/releases/latest | grep -oP '"browser_download_url":\s*".*nikki_aarch64_cortex-a53-openwrt-24.10.tar.gz"' | cut -d '"' -f 4)
-          curl -LO $(curl -s https://api.github.com/repos/nikkinikki-org/OpenWrt-nikki/releases/latest | grep -oP '"browser_download_url":\s*".*nikki_x86_64-openwrt-24.10.tar.gz"' | cut -d '"' -f 4)
-          curl -LO $(curl -s https://api.github.com/repos/nikkinikki-org/OpenWrt-nikki/releases/latest | grep -oP '"browser_download_url":\s*".*nikki_arm_cortex-a7_neon-vfpv4-openwrt-24.10.tar.gz"' | cut -d '"' -f 4)
-          tar --one-top-level=nikki_aarch64_cortex-a53-openwrt-24.10 -xvzf nikki_aarch64_cortex-a53-openwrt-24.10.tar.gz
-          tar --one-top-level=nikki_x86_64-openwrt-24.10 -xvzf nikki_x86_64-openwrt-24.10.tar.gz
-          tar --one-top-level=nikki_arm_cortex-a7_neon-vfpv4-openwrt-24.10 -xvzf nikki_arm_cortex-a7_neon-vfpv4-openwrt-24.10.tar.gz
+          RELEASE_INFO=$(curl -s https://api.github.com/repos/nikkinikki-org/OpenWrt-nikki/releases/latest)
+          for ARCH in aarch64_cortex-a53 x86_64 arm_cortex-a7_neon-vfpv4; do
+            URL=$(echo "$RELEASE_INFO" | python3 -c "
+import json,sys,re
+d=json.load(sys.stdin)
+arch='$ARCH'
+for a in d['assets']:
+    if arch in a['name'] and '24.10' in a['name'] and a['name'].endswith('.tar.gz'):
+        print(a['browser_download_url'])
+        break
+")
+            if [ -n "$URL" ]; then
+              echo "⬇️ $ARCH (24.10 ipk): $(basename $URL)"
+              mkdir -p "ipk-$ARCH"
+              curl -sL -o "${ARCH}_24.10.tar.gz" "$URL"
+              tar --one-top-level=ipk-$ARCH -xzf "${ARCH}_24.10.tar.gz"
+              find ipk-$ARCH -name "*.ipk" -exec mv {} ipk-$ARCH/ \; 2>/dev/null || true
+              find ipk-$ARCH -mindepth 1 -type d -delete 2>/dev/null || true
+              # 处理文件名中的 ~ 字符
+              pushd "ipk-$ARCH" >/dev/null
+              for f in *~*.ipk; do
+                [ -e "$f" ] || continue
+                new_f=$(echo "$f" | tr -d '~')
+                [ "$f" != "$new_f" ] && mv "$f" "$new_f" && echo "  重命名: $f -> $new_f"
+              done
+              popd >/dev/null
+              rm -f "${ARCH}_24.10.tar.gz"
+              echo "  ipk 文件数: $(ls ipk-$ARCH/*.ipk 2>/dev/null | wc -l)"
+            else
+              echo "⚠️ $ARCH: 24.10 ipk tar.gz not found"
+            fi
+          done
 
-      - name: Organize files for aarch64_cortex-a53&x86_64&arm
+      - name: Download 25.12 apk tar.gz
         run: |
-          mkdir nikki_x86_64 nikki_aarch64_cortex-a53 nikki_arm_cortex-a7_neon-vfpv4
-          cp nikki_x86_64-openwrt-24.10/*.ipk nikki_x86_64/
-          cp nikki_aarch64_cortex-a53-openwrt-24.10/*.ipk nikki_aarch64_cortex-a53/
-          cp nikki_arm_cortex-a7_neon-vfpv4-openwrt-24.10/*.ipk nikki_arm_cortex-a7_neon-vfpv4/
-          # 保存当前路径并进入目标目录
-          pushd "nikki_x86_64" >/dev/null || exit 1
-          for file in *~*.ipk; do
-          [ -e "$file" ] || continue
-          # 构造新文件名，去除 ~ 字符
-          new_file="$(echo "$file" | tr -d '~')"
-          # 如果目标文件名已存在，则提示并跳过
-          if [ -e "$new_file" ]; then
-          echo "目标文件已存在，跳过: $new_file"
-          continue
-          fi
-          # 重命名文件
-          mv "$file" "$new_file"
-          echo "已重命名: $file -> $new_file"
+          RELEASE_INFO=$(curl -s https://api.github.com/repos/nikkinikki-org/OpenWrt-nikki/releases/latest)
+          for ARCH in aarch64_cortex-a53 x86_64 arm_cortex-a7_neon-vfpv4; do
+            URL=$(echo "$RELEASE_INFO" | python3 -c "
+import json,sys,re
+d=json.load(sys.stdin)
+arch='$ARCH'
+for a in d['assets']:
+    if arch in a['name'] and '25.12' in a['name'] and a['name'].endswith('.tar.gz'):
+        print(a['browser_download_url'])
+        break
+")
+            if [ -n "$URL" ]; then
+              echo "⬇️ $ARCH (25.12 apk): $(basename $URL)"
+              mkdir -p "apk-$ARCH"
+              curl -sL -o "${ARCH}_25.12.tar.gz" "$URL"
+              tar --one-top-level=apk-$ARCH -xzf "${ARCH}_25.12.tar.gz"
+              find apk-$ARCH -name "*.apk" -exec mv {} apk-$ARCH/ \; 2>/dev/null || true
+              find apk-$ARCH -mindepth 1 -type d -delete 2>/dev/null || true
+              rm -f "${ARCH}_25.12.tar.gz"
+              echo "  apk 文件数: $(ls apk-$ARCH/*.apk 2>/dev/null | wc -l)"
+            else
+              echo "⚠️ $ARCH: 25.12 apk tar.gz not found"
+            fi
           done
-          popd >/dev/null
 
-          pushd "nikki_aarch64_cortex-a53" >/dev/null || exit 1
-          for file in *~*.ipk; do
-          [ -e "$file" ] || continue
-          # 构造新文件名，去除 ~ 字符
-          new_file="$(echo "$file" | tr -d '~')"
-          # 如果目标文件名已存在，则提示并跳过
-          if [ -e "$new_file" ]; then
-          echo "目标文件已存在，跳过: $new_file"
-          continue
-          fi
-          # 重命名文件
-          mv "$file" "$new_file"
-          echo "已重命名: $file -> $new_file"
-          done
-          popd >/dev/null
-
-          pushd "nikki_arm_cortex-a7_neon-vfpv4" >/dev/null || exit 1
-          for file in *~*.ipk; do
-          [ -e "$file" ] || continue
-          # 构造新文件名，去除 ~ 字符
-          new_file="$(echo "$file" | tr -d '~')"
-          # 如果目标文件名已存在，则提示并跳过
-          if [ -e "$new_file" ]; then
-          echo "目标文件已存在，跳过: $new_file"
-          continue
-          fi
-          # 重命名文件
-          mv "$file" "$new_file"
-          echo "已重命名: $file -> $new_file"
-          done
-          popd >/dev/null
-          
-
-      - name: Create install.sh scripts
+      - name: Create install.sh and pack (ipk 分包 - 24.10)
         run: |
-          cat <<EOF > nikki_x86_64/install.sh
+          for ARCH in x86_64 aarch64_cortex-a53 arm_cortex-a7_neon-vfpv4; do
+            if [ -z "$(ls -A ipk-$ARCH/*.ipk 2>/dev/null)" ]; then
+              echo "⚠️ $ARCH: 无 ipk 包,跳过打包"
+              continue
+            fi
+            cat <<'EOF' > "ipk-$ARCH/install.sh"
           #!/bin/sh
           opkg update
           if [ $? -ne 0 ]; then
@@ -109,55 +110,62 @@ jobs:
           fi
           opkg install *.ipk
           EOF
-          chmod +x nikki_x86_64/install.sh
-          cp nikki_x86_64/install.sh nikki_aarch64_cortex-a53/install.sh
-          cp nikki_x86_64/install.sh nikki_arm_cortex-a7_neon-vfpv4/install.sh
-          
-
-      - name: Move nikki directories to makeself
-        run: |
-          mv nikki_x86_64 makeself/
-          mv nikki_aarch64_cortex-a53 makeself/
-          mv nikki_arm_cortex-a7_neon-vfpv4 makeself/
-
-      - name: Create self-extracting packages
-        run: |
+            chmod +x "ipk-$ARCH/install.sh"
+          done
+          mkdir -p output
           cd makeself
-          ./makeself.sh nikki_x86_64/ nikki_${{ env.LATEST_TAG }}_x86_64.run "by github action" ./install.sh
-          ./makeself.sh nikki_aarch64_cortex-a53/ nikki_${{ env.LATEST_TAG }}_aarch64_cortex-a53.run "by github action" ./install.sh
-          ./makeself.sh nikki_arm_cortex-a7_neon-vfpv4/ nikki_${{ env.LATEST_TAG }}_arm_cortex-a7_neon-vfpv4.run "by github action" ./install.sh
-          
+          for ARCH in x86_64 aarch64_cortex-a53 arm_cortex-a7_neon-vfpv4; do
+            if [ -z "$(ls -A ../ipk-$ARCH/*.ipk 2>/dev/null)" ]; then
+              continue
+            fi
+            mv ../ipk-$ARCH .
+            ./makeself.sh ipk-$ARCH/ ../output/nikki_${{ env.LATEST_TAG }}_ipk_${ARCH}.run "nikki ${{ env.LATEST_TAG }} ${ARCH} (ipk for 24.10)" ./install.sh
+          done
+
+      - name: Create install.sh and pack (apk 分包 - 25.12)
+        run: |
+          for ARCH in x86_64 aarch64_cortex-a53 arm_cortex-a7_neon-vfpv4; do
+            if [ -z "$(ls -A apk-$ARCH/*.apk 2>/dev/null)" ]; then
+              echo "⚠️ $ARCH: 无 apk 包,跳过打包"
+              continue
+            fi
+            cat <<'EOF' > "apk-$ARCH/install.sh"
+          #!/bin/sh
+          apk add --no-cache --allow-untrusted *.apk || true
+          EOF
+            chmod +x "apk-$ARCH/install.sh"
+          done
+          cd makeself
+          for ARCH in x86_64 aarch64_cortex-a53 arm_cortex-a7_neon-vfpv4; do
+            if [ -z "$(ls -A ../apk-$ARCH/*.apk 2>/dev/null)" ]; then
+              continue
+            fi
+            mv ../apk-$ARCH .
+            ./makeself.sh apk-$ARCH/ ../output/nikki_${{ env.LATEST_TAG }}_apk_${ARCH}.run "nikki ${{ env.LATEST_TAG }} ${ARCH} (apk for 25.12)" ./install.sh
+          done
 
       - name: Check file sizes
         run: |
-          ls -lh makeself/nikki_*.run
-
-      - name: Fetch latest release details
-        id: fetch_release_details
-        run: |
-          extra_content="![Github](https://img.shields.io/badge/nikki.run-123456?logo=github&logoColor=fff&labelColor=yellow&style=for-the-badge) [![Github](https://img.shields.io/badge/国内加速站下载-FC7C0D?logo=github&logoColor=fff&labelColor=000&style=for-the-badge)](https://wkdaily.cpolar.cn/archives/1) ![GitHub Downloads (all assets, specific tag)](https://img.shields.io/github/downloads/wukongdaily/RunFilesBuilder/${{ env.LATEST_TAG }}/total?style=for-the-badge&labelColor=black&color=%2325c2a0)"
-          sed -i "1i$extra_content" "${{ github.workspace }}/info.md"
-
-      - name: Print release notes
-        run: |
-          cat ${{ github.workspace }}/info.md
-
-      - name: Generate new tag & release
-        uses: softprops/action-gh-release@v2.1.0
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          tag_name: ${{ env.LATEST_TAG }}
-          target_commitish: ${{ github.ref_name }}
-          prerelease: false
-          body_path: ${{ github.workspace }}/info.md
+          ls -lh output/*.run
 
       - name: Upload run files as release assets
         uses: softprops/action-gh-release@v2.1.0
         with:
           tag_name: ${{ env.LATEST_TAG }}
           name: "nikki-${{ env.LATEST_TAG }}"
-          files: makeself/nikki_*.run
+          files: output/*.run
+          body: |
+            nikki proxy for OpenWrt / ImmortalWrt
+
+            分包策略:
+            - nikki_*_ipk_*.run → 24.10 构建 (opkg 安装 .ipk)
+            - nikki_*_apk_*.run → 25.12 构建 (apk 安装 .apk)
+
+            文件名标识:
+            - _ipk_ → 仅供 24.10 抓取
+            - _apk_ → 仅供 25.12 抓取
+
+            源仓库: https://github.com/nikkinikki-org/OpenWrt-nikki
           token: ${{ secrets.GITHUB_TOKEN }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

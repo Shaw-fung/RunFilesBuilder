@@ -1,10 +1,7 @@
 #=================================================
 # https://github.com/wukongdaily/RunFilesBuilder
-# Modified by Shaw-fung: added arm_cortex-a7_neon-vfpv4 support + daily cron
-# Description: Build RunFiles using GitHub Actions
-# Lisence: MIT
-# Author: wukongdaily
-# Blog: wkdaily.cpolar.cn
+# Modified: split ipk/apk packages for 24.10/25.12
+# Description: Build iStore RunFiles
 #=================================================
 name: Make iStore run file
 
@@ -24,42 +21,96 @@ jobs:
       - name: 📦 安装 makeself 工具
         run: sudo apt-get update && sudo apt-get install -y makeself curl
 
-      - name: 🚀 下载 luci-app-store 的所有 ipk
+      - name: 🚀 下载 24.10 ipk (iStore)
         run: |
-          chmod +x shell/store.sh
-          ./shell/store.sh
+          mkdir -p ipk-store
+          BASE_URL="https://repo.istoreos.com/repo/all/store/"
+          page_content=$(curl -s "$BASE_URL")
+          for prefix in luci-app-store luci-lib-taskd luci-lib-xterm taskd; do
+            match=$(echo "$page_content" | grep -oP 'href="\K[^"]+\.ipk' | grep "^${prefix}_" | head -n1)
+            if [ -n "$match" ]; then
+              echo "⬇️ (24.10): $match"
+              curl -sL -o "ipk-store/${match}" "${BASE_URL}${match}"
+            else
+              echo "⚠️ not found: $prefix"
+            fi
+          done
 
-      - name: 📋 拷贝 install.sh 到 store 文件夹
+      - name: 🚀 下载 25.12 兼容包 (iStore, ipk format, apk-installable)
         run: |
-          cp shell/install.sh store/install.sh
-          chmod +x store/install.sh
+          mkdir -p apk-store
+          BASE_URL="https://repo.istoreos.com/repo/all/store/"
+          page_content=$(curl -s "$BASE_URL")
+          for prefix in luci-app-store luci-lib-taskd luci-lib-xterm taskd; do
+            match=$(echo "$page_content" | grep -oP 'href="\K[^"]+\.ipk' | grep "^${prefix}_" | head -n1)
+            if [ -n "$match" ]; then
+              echo "⬇️ (25.12): $match"
+              curl -sL -o "apk-store/${match}" "${BASE_URL}${match}"
+            else
+              echo "⚠️ not found: $prefix"
+            fi
+          done
 
       - name: 🔍 提取版本号并打包
         id: pack
         run: |
+          git clone https://github.com/megastep/makeself.git
           mkdir -p output
 
-          # 获取 luci-app-store 的 ipk 文件
-          STORE_IPK=$(ls store/luci-app-store_*.ipk | head -n 1)
-          VERSION=$(basename "$STORE_IPK" | sed -n 's/^luci-app-store_\([^-]*-[^_]*\)_.*$/\1/p')
-
-          if [ -z "$VERSION" ]; then
+          # 获取版本
+          STORE_IPK=$(ls ipk-store/luci-app-store_*.ipk 2>/dev/null | head -n 1)
+          if [ -z "$STORE_IPK" ]; then
             echo "❌ 无法提取版本号"
             exit 1
           fi
-
+          VERSION=$(basename "$STORE_IPK" | sed -n 's/^luci-app-store_\([^-]*-[^_]*\)_.*$/\1/p')
           echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "版本: $VERSION"
 
-          # 打包成 .run
-          makeself store "output/luci-app-store-${VERSION}_all.run" \
-            "iStore Installer v${VERSION}" ./install.sh
+          # ipk 包 (24.10)
+          cat <<'EOF' > ipk-store/install.sh
+          #!/bin/sh
+          opkg update
+          opkg install *.ipk --force-depends
+          EOF
+          chmod +x ipk-store/install.sh
+          mv ipk-store makeself/
+          cd makeself
+          ./makeself.sh ipk-store/ ../output/luci-app-store_${VERSION}_ipk_all.run "iStore Installer v${VERSION} (ipk for 24.10)" ./install.sh
+          cd ..
+
+          # apk 包 (25.12)
+          cat <<'EOF' > apk-store/install.sh
+          #!/bin/sh
+          apk add --no-cache --allow-untrusted *.ipk 2>/dev/null || opkg install *.ipk --force-depends
+          EOF
+          chmod +x apk-store/install.sh
+          mv apk-store makeself/
+          cd makeself
+          ./makeself.sh apk-store/ ../output/luci-app-store_${VERSION}_apk_all.run "iStore Installer v${VERSION} (apk for 25.12)" ./install.sh
+          cd ..
+
+      - name: Check file sizes
+        run: |
+          ls -lh output/*.run
 
       - name: 📤 上传 .run 文件到 release
         uses: softprops/action-gh-release@v2.1.0
         with:
           tag_name: "iStore-${{ steps.pack.outputs.version }}"
           name: "iStore-${{ steps.pack.outputs.version }}"
-          body_path: ${{ github.workspace }}/info/store.md
+          body: |
+            iStore (luci-app-store)
+
+            分包策略:
+            - luci-app-store_*_ipk_all.run → 24.10 构建 (opkg 安装 .ipk)
+            - luci-app-store_*_apk_all.run → 25.12 构建 (apk 安装 .ipk 兼容)
+
+            文件名标识:
+            - _ipk_ → 仅供 24.10 抓取
+            - _apk_ → 仅供 25.12 抓取
+
+            源: https://repo.istoreos.com/repo/all/store/
           files: output/*.run
           token: ${{ secrets.GITHUB_TOKEN }}
         env:

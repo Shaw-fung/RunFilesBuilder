@@ -1,6 +1,7 @@
 #=================================================
 # Build RunFiles for misc all-arch plugins
 # (uninstall, aurora theme, rtp2httpd)
+# Split ipk/apk packages for 24.10/25.12
 #=================================================
 name: Make misc all-arch plugins run files
 
@@ -20,76 +21,152 @@ jobs:
       - name: Install makeself
         run: sudo apt-get update && sudo apt-get install -y makeself curl
 
-      - name: Download misc plugin ipks from dl.openwrt.ai
+      - name: Download 24.10 ipks from dl.openwrt.ai
         run: |
-          chmod +x shell/dl_openwrt_ai.sh
-          # Download all needed ipks (they are _all.ipk, same for every arch)
-          ./shell/dl_openwrt_ai.sh x86_64 \
-            luci-app-uninstall \
-            luci-theme-aurora \
-            luci-app-aurora-config \
-            luci-i18n-aurora-config-zh-cn \
-            luci-app-rtp2httpd \
-            luci-i18n-rtp2httpd-zh-cn
+          mkdir -p ipk-all
+          BASE_URL="https://dl.openwrt.ai/packages-24.10/x86_64/kiddin9/"
+          page_content=$(curl -s "$BASE_URL")
+          for prefix in luci-app-uninstall luci-theme-aurora luci-app-aurora-config luci-i18n-aurora-config-zh-cn luci-app-rtp2httpd luci-i18n-rtp2httpd-zh-cn; do
+            match=$(echo "$page_content" | grep -oP 'href="\K[^"]+\.ipk' | grep "^${prefix}_" | head -n1)
+            if [ -n "$match" ]; then
+              echo "⬇️ (24.10): $match"
+              curl -sL -o "ipk-all/${match}" "${BASE_URL}${match}"
+            else
+              echo "⚠️ not found: $prefix"
+            fi
+          done
 
-      - name: Organize and pack uninstall
+      - name: Download 25.12 packages from dl.openwrt.ai
         run: |
-          mkdir -p uninstall
-          cp x86_64/luci-app-uninstall*.ipk uninstall/ 2>/dev/null || true
-          cat <<'EOF' > uninstall/install.sh
-          #!/bin/sh
-          opkg update
-          opkg install *.ipk --force-depends
-          EOF
-          chmod +x uninstall/install.sh
+          mkdir -p apk-all
+          BASE_URL="https://dl.openwrt.ai/packages-25.12/x86_64/kiddin9/"
+          page_content=$(curl -s "$BASE_URL")
+          for prefix in luci-app-uninstall luci-theme-aurora luci-app-aurora-config luci-i18n-aurora-config-zh-cn luci-app-rtp2httpd luci-i18n-rtp2httpd-zh-cn; do
+            match=$(echo "$page_content" | grep -oP 'href="\K[^"]+\.ipk' | grep "^${prefix}_" | head -n1)
+            if [ -n "$match" ]; then
+              echo "⬇️ (25.12): $match"
+              curl -sL -o "apk-all/${match}" "${BASE_URL}${match}"
+            else
+              echo "⚠️ not found: $prefix"
+            fi
+          done
 
-      - name: Organize and pack aurora theme
-        run: |
-          mkdir -p aurora-theme
-          cp x86_64/luci-theme-aurora*.ipk aurora-theme/ 2>/dev/null || true
-          cp x86_64/luci-app-aurora-config*.ipk aurora-theme/ 2>/dev/null || true
-          cp x86_64/luci-i18n-aurora-config*.ipk aurora-theme/ 2>/dev/null || true
-          cat <<'EOF' > aurora-theme/install.sh
-          #!/bin/sh
-          opkg update
-          opkg install *.ipk --force-depends
-          EOF
-          chmod +x aurora-theme/install.sh
-
-      - name: Organize and pack rtp2httpd
-        run: |
-          mkdir -p rtp2httpd
-          cp x86_64/luci-app-rtp2httpd*.ipk rtp2httpd/ 2>/dev/null || true
-          cp x86_64/luci-i18n-rtp2httpd*.ipk rtp2httpd/ 2>/dev/null || true
-          cat <<'EOF' > rtp2httpd/install.sh
-          #!/bin/sh
-          opkg update
-          opkg install *.ipk --force-depends
-          EOF
-          chmod +x rtp2httpd/install.sh
-
-      - name: Clone makeself and pack all
+      - name: Organize and pack uninstall (ipk 24.10)
         run: |
           git clone https://github.com/megastep/makeself.git
           mkdir -p output
           VERSION=$(date -u -d '+8 hour' +'%Y-%m-%d')
-          
-          mv uninstall makeself/
+
+          # uninstall ipk
+          mkdir -p pkg-ipk-uninstall
+          cp ipk-all/luci-app-uninstall*.ipk pkg-ipk-uninstall/ 2>/dev/null || true
+          cat <<'EOF' > pkg-ipk-uninstall/install.sh
+          #!/bin/sh
+          opkg update
+          opkg install *.ipk --force-depends
+          EOF
+          chmod +x pkg-ipk-uninstall/install.sh
+          mv pkg-ipk-uninstall makeself/
           cd makeself
-          ./makeself.sh uninstall/ ../output/luci-app-uninstall-${VERSION}_all.run "uninstall v${VERSION}" ./install.sh
-          
-          mv ../aurora-theme .
-          ./makeself.sh aurora-theme/ ../output/luci-theme-aurora-${VERSION}_all.run "aurora theme v${VERSION}" ./install.sh
-          
-          mv ../rtp2httpd .
-          ./makeself.sh rtp2httpd/ ../output/luci-app-rtp2httpd-${VERSION}_all.run "rtp2httpd v${VERSION}" ./install.sh
+          ./makeself.sh pkg-ipk-uninstall/ ../output/luci-app-uninstall_${VERSION}_ipk_all.run "uninstall v${VERSION} (ipk for 24.10)" ./install.sh
+          cd ..
+
+          # aurora ipk
+          mkdir -p pkg-ipk-aurora
+          cp ipk-all/luci-theme-aurora*.ipk pkg-ipk-aurora/ 2>/dev/null || true
+          cp ipk-all/luci-app-aurora-config*.ipk pkg-ipk-aurora/ 2>/dev/null || true
+          cp ipk-all/luci-i18n-aurora-config*.ipk pkg-ipk-aurora/ 2>/dev/null || true
+          cat <<'EOF' > pkg-ipk-aurora/install.sh
+          #!/bin/sh
+          opkg update
+          opkg install *.ipk --force-depends
+          EOF
+          chmod +x pkg-ipk-aurora/install.sh
+          mv pkg-ipk-aurora makeself/
+          cd makeself
+          ./makeself.sh pkg-ipk-aurora/ ../output/luci-theme-aurora_${VERSION}_ipk_all.run "aurora theme v${VERSION} (ipk for 24.10)" ./install.sh
+          cd ..
+
+          # rtp2httpd ipk
+          mkdir -p pkg-ipk-rtp2httpd
+          cp ipk-all/luci-app-rtp2httpd*.ipk pkg-ipk-rtp2httpd/ 2>/dev/null || true
+          cp ipk-all/luci-i18n-rtp2httpd*.ipk pkg-ipk-rtp2httpd/ 2>/dev/null || true
+          cat <<'EOF' > pkg-ipk-rtp2httpd/install.sh
+          #!/bin/sh
+          opkg update
+          opkg install *.ipk --force-depends
+          EOF
+          chmod +x pkg-ipk-rtp2httpd/install.sh
+          mv pkg-ipk-rtp2httpd makeself/
+          cd makeself
+          ./makeself.sh pkg-ipk-rtp2httpd/ ../output/luci-app-rtp2httpd_${VERSION}_ipk_all.run "rtp2httpd v${VERSION} (ipk for 24.10)" ./install.sh
+          cd ..
+
+      - name: Organize and pack uninstall (apk 25.12)
+        run: |
+          VERSION=$(date -u -d '+8 hour' +'%Y-%m-%d')
+
+          # uninstall apk
+          mkdir -p pkg-apk-uninstall
+          cp apk-all/luci-app-uninstall*.ipk pkg-apk-uninstall/ 2>/dev/null || true
+          cat <<'EOF' > pkg-apk-uninstall/install.sh
+          #!/bin/sh
+          apk add --no-cache --allow-untrusted *.ipk 2>/dev/null || opkg install *.ipk --force-depends
+          EOF
+          chmod +x pkg-apk-uninstall/install.sh
+          mv pkg-apk-uninstall makeself/
+          cd makeself
+          ./makeself.sh pkg-apk-uninstall/ ../output/luci-app-uninstall_${VERSION}_apk_all.run "uninstall v${VERSION} (apk for 25.12)" ./install.sh
+          cd ..
+
+          # aurora apk
+          mkdir -p pkg-apk-aurora
+          cp apk-all/luci-theme-aurora*.ipk pkg-apk-aurora/ 2>/dev/null || true
+          cp apk-all/luci-app-aurora-config*.ipk pkg-apk-aurora/ 2>/dev/null || true
+          cp apk-all/luci-i18n-aurora-config*.ipk pkg-apk-aurora/ 2>/dev/null || true
+          cat <<'EOF' > pkg-apk-aurora/install.sh
+          #!/bin/sh
+          apk add --no-cache --allow-untrusted *.ipk 2>/dev/null || opkg install *.ipk --force-depends
+          EOF
+          chmod +x pkg-apk-aurora/install.sh
+          mv pkg-apk-aurora makeself/
+          cd makeself
+          ./makeself.sh pkg-apk-aurora/ ../output/luci-theme-aurora_${VERSION}_apk_all.run "aurora theme v${VERSION} (apk for 25.12)" ./install.sh
+          cd ..
+
+          # rtp2httpd apk
+          mkdir -p pkg-apk-rtp2httpd
+          cp apk-all/luci-app-rtp2httpd*.ipk pkg-apk-rtp2httpd/ 2>/dev/null || true
+          cp apk-all/luci-i18n-rtp2httpd*.ipk pkg-apk-rtp2httpd/ 2>/dev/null || true
+          cat <<'EOF' > pkg-apk-rtp2httpd/install.sh
+          #!/bin/sh
+          apk add --no-cache --allow-untrusted *.ipk 2>/dev/null || opkg install *.ipk --force-depends
+          EOF
+          chmod +x pkg-apk-rtp2httpd/install.sh
+          mv pkg-apk-rtp2httpd makeself/
+          cd makeself
+          ./makeself.sh pkg-apk-rtp2httpd/ ../output/luci-app-rtp2httpd_${VERSION}_apk_all.run "rtp2httpd v${VERSION} (apk for 25.12)" ./install.sh
+          cd ..
+
+      - name: Check file sizes
+        run: |
+          ls -lh output/*.run
 
       - name: Upload to GitHub Release
         uses: softprops/action-gh-release@v2.1.0
         with:
           tag_name: "misc-all-latest"
           name: "misc all-arch plugins"
-          body: "Plugins: luci-app-uninstall, luci-theme-aurora, luci-app-rtp2httpd"
+          body: |
+            Plugins: luci-app-uninstall, luci-theme-aurora, luci-app-rtp2httpd
+
+            分包策略:
+            - *_ipk_all.run → 24.10 构建 (opkg 安装 .ipk)
+            - *_apk_all.run → 25.12 构建 (apk 安装 .ipk 兼容)
+
+            文件名标识:
+            - _ipk_ → 仅供 24.10 抓取
+            - _apk_ → 仅供 25.12 抓取
           files: output/*.run
           token: ${{ secrets.GITHUB_TOKEN }}
         env:

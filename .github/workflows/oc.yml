@@ -1,13 +1,14 @@
 #=================================================
 # https://github.com/wukongdaily/RunFilesBuilder
 # Modified by Shaw-fung: added arm_cortex-a7_neon-vfpv4 support + daily cron
+# Modified again: split ipk/apk packages for 24.10/25.12
 # Description: Build RunFiles using GitHub Actions
 # Lisence: MIT
 # Author: wukongdaily
 # Blog: wkdaily.cpolar.cn
 #=================================================
 
-name: Make OpenClash run files 
+name: Make OpenClash run files
 
 on:
   workflow_dispatch:
@@ -19,21 +20,30 @@ jobs:
     runs-on: ubuntu-22.04
 
     steps:
-      - name: Create OpenClash & openclash directory for git & ipk
-        run: mkdir -p OpenClash openclash-x86 openclash-a53 openclash-arm
-        
-      - name: Checkout package branch to OpenClash directory
+      - name: Create OpenClash directories
+        run: mkdir -p OpenClash ipk-x86_64 ipk-aarch64_cortex-a53 ipk-arm_cortex-a7_neon-vfpv4 apk-x86_64 apk-aarch64_cortex-a53 apk-arm_cortex-a7_neon-vfpv4
+
+      - name: Checkout package branch
         uses: actions/checkout@v4
         with:
           repository: vernesong/OpenClash
           path: OpenClash
           ref: package
-          
-      - name: Copy latest openclash IPK to openclash directory
+
+      - name: Copy ipk and apk files
         run: |
-          cp OpenClash/master/*.ipk openclash-x86
-          cp OpenClash/master/*.ipk openclash-a53
-          cp OpenClash/master/*.ipk openclash-arm
+          # ipk (24.10) - 复制到所有架构目录 (all 架构通用)
+          cp OpenClash/master/*.ipk ipk-x86_64/
+          cp OpenClash/master/*.ipk ipk-aarch64_cortex-a53/
+          cp OpenClash/master/*.ipk ipk-arm_cortex-a7_neon-vfpv4/
+          # apk (25.12) - 复制到所有架构目录 (all 架构通用)
+          cp OpenClash/master/*.apk apk-x86_64/ 2>/dev/null || true
+          cp OpenClash/master/*.apk apk-aarch64_cortex-a53/ 2>/dev/null || true
+          cp OpenClash/master/*.apk apk-arm_cortex-a7_neon-vfpv4/ 2>/dev/null || true
+          echo "ipk files:"
+          ls -lh ipk-x86_64/*.ipk
+          echo "apk files:"
+          ls -lh apk-x86_64/*.apk 2>/dev/null || echo "  none"
 
       - name: Get version info
         id: extract_version
@@ -41,34 +51,40 @@ jobs:
           first_line=$(head -n 1 OpenClash/master/version)
           echo "version=$first_line" >> $GITHUB_ENV
 
-      - name: Create Meta directory for git
-        run: mkdir Meta
-      
-      - name: Checkout core branch to Meta directory
+      - name: Checkout core branch
         uses: actions/checkout@v4
         with:
           repository: vernesong/OpenClash
           path: Meta
           ref: core
-      
-      - name: list all cores on core branch
-        run: ls Meta/master/meta
 
-      - name: Copy latest meta core to openclash directory
+      - name: Copy meta core to ipk directories
         run: |
-          tar -xzvf Meta/master/meta/clash-linux-amd64-v1.tar.gz -C openclash-x86
-          tar -xzvf Meta/master/meta/clash-linux-arm64.tar.gz -C openclash-a53
-          tar -xzvf Meta/master/meta/clash-linux-armv7.tar.gz -C openclash-arm
-          mv openclash-x86/clash openclash-x86/clash_meta
-          mv openclash-a53/clash openclash-a53/clash_meta
-          mv openclash-arm/clash openclash-arm/clash_meta
-          ls openclash-x86
-          ls openclash-a53
-          ls openclash-arm
+          tar -xzvf Meta/master/meta/clash-linux-amd64-v1.tar.gz -C ipk-x86_64
+          tar -xzvf Meta/master/meta/clash-linux-arm64.tar.gz -C ipk-aarch64_cortex-a53
+          tar -xzvf Meta/master/meta/clash-linux-armv7.tar.gz -C ipk-arm_cortex-a7_neon-vfpv4
+          mv ipk-x86_64/clash ipk-x86_64/clash_meta
+          mv ipk-aarch64_cortex-a53/clash ipk-aarch64_cortex-a53/clash_meta
+          mv ipk-arm_cortex-a7_neon-vfpv4/clash ipk-arm_cortex-a7_neon-vfpv4/clash_meta
 
-      - name: Create install.sh script save to openclash directory
+      - name: Copy meta core to apk directories
         run: |
-          cat << 'EOF' > openclash-x86/install.sh
+          for ARCH in x86_64 aarch64_cortex-a53 arm_cortex-a7_neon-vfpv4; do
+            if [ -z "$(ls -A apk-$ARCH/*.apk 2>/dev/null)" ]; then
+              echo "⚠️ $ARCH: 无 apk 包,跳过复制 core"
+              continue
+            fi
+            tar -xzvf Meta/master/meta/clash-linux-amd64-v1.tar.gz -C apk-x86_64 2>/dev/null
+            [ "$ARCH" = "aarch64_cortex-a53" ] && tar -xzvf Meta/master/meta/clash-linux-arm64.tar.gz -C apk-$ARCH 2>/dev/null
+            [ "$ARCH" = "arm_cortex-a7_neon-vfpv4" ] && tar -xzvf Meta/master/meta/clash-linux-armv7.tar.gz -C apk-$ARCH 2>/dev/null
+            [ "$ARCH" = "x86_64" ] && mv apk-x86_64/clash apk-x86_64/clash_meta
+            [ "$ARCH" != "x86_64" ] && mv apk-$ARCH/clash apk-$ARCH/clash_meta 2>/dev/null || true
+          done
+
+      - name: Create install.sh for ipk (24.10)
+        run: |
+          for ARCH in x86_64 aarch64_cortex-a53 arm_cortex-a7_neon-vfpv4; do
+            cat << 'EOF' > "ipk-$ARCH/install.sh"
           opkg update
           if [ $? -ne 0 ]; then
               echo "update failed。"
@@ -85,43 +101,78 @@ jobs:
               exit 0
           fi
           EOF
-          chmod +x openclash-x86/install.sh
-          cp openclash-x86/install.sh openclash-a53/install.sh
-          chmod +x openclash-a53/install.sh
-          cp openclash-x86/install.sh openclash-arm/install.sh
-          chmod +x openclash-arm/install.sh
+            chmod +x "ipk-$ARCH/install.sh"
+          done
 
-      - name: Clone makeself repository for self-extracting installer
-        run: | 
-          git clone https://github.com/megastep/makeself.git
-
-      
-      - name: move openclash directory to makeself & create run
+      - name: Create install.sh for apk (25.12)
         run: |
-          mv openclash-x86 makeself/
-          mv openclash-a53 makeself/
-          mv openclash-arm makeself/
-          cd makeself
-          ./makeself.sh openclash-x86/ openclash-x86-64-${{ env.version }}.run "by github action" ./install.sh
-          ./makeself.sh openclash-a53/ openclash-aarch64_cortex-a53-${{ env.version }}.run "by github action" ./install.sh
-          ./makeself.sh openclash-arm/ openclash-arm_cortex-a7_neon-vfpv4-${{ env.version }}.run "by github action" ./install.sh
+          for ARCH in x86_64 aarch64_cortex-a53 arm_cortex-a7_neon-vfpv4; do
+            if [ -z "$(ls -A apk-$ARCH/*.apk 2>/dev/null)" ]; then
+              continue
+            fi
+            cat << 'EOF' > "apk-$ARCH/install.sh"
+          apk add --no-cache --allow-untrusted *.apk || true
+          mv clash_meta /etc/openclash/core/
+          sleep 10s
+          ifconfig br-lan > /dev/null 2>&1
+          if [ $? -ne 0 ]; then
+              echo "接口错误，重启网络。"
+              /etc/init.d/network restart
+              echo "重启完毕"
+              exit 0
+          fi
+          EOF
+            chmod +x "apk-$ARCH/install.sh"
+          done
 
-      - name: Generate new tag & release
-        uses: softprops/action-gh-release@master
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          tag_name: ${{ env.version }}
-          target_commitish: ${{ github.ref_name }}
-          prerelease: false
-          body: "![Github](https://img.shields.io/badge/OpenClash.run-123456?logo=github&logoColor=fff&labelColor=red&style=for-the-badge) [![Github](https://img.shields.io/badge/国内加速站下载-FC7C0D?logo=github&logoColor=fff&labelColor=000&style=for-the-badge)](https://wkdaily.cpolar.cn/archives/1) ![GitHub Downloads (all assets, specific tag)](https://img.shields.io/github/downloads/wukongdaily/RunFilesBuilder/${{ env.version }}/total?style=for-the-badge&labelColor=black&color=%2325c2a0)"
+      - name: Clone makeself
+        run: git clone https://github.com/megastep/makeself.git
+
+      - name: Create ipk run files (24.10)
+        run: |
+          mkdir -p output
+          cd makeself
+          mv ../ipk-x86_64 .
+          mv ../ipk-aarch64_cortex-a53 .
+          mv ../ipk-arm_cortex-a7_neon-vfpv4 .
+          ./makeself.sh ipk-x86_64/ ../output/openclash_ipk_x86_64-${{ env.version }}.run "OpenClash x86_64 ${{ env.version }} (ipk for 24.10)" ./install.sh
+          ./makeself.sh ipk-aarch64_cortex-a53/ ../output/openclash_ipk_aarch64_cortex-a53-${{ env.version }}.run "OpenClash aarch64 ${{ env.version }} (ipk for 24.10)" ./install.sh
+          ./makeself.sh ipk-arm_cortex-a7_neon-vfpv4/ ../output/openclash_ipk_arm_cortex-a7_neon-vfpv4-${{ env.version }}.run "OpenClash arm ${{ env.version }} (ipk for 24.10)" ./install.sh
+
+      - name: Create apk run files (25.12)
+        run: |
+          cd makeself
+          for ARCH in x86_64 aarch64_cortex-a53 arm_cortex-a7_neon-vfpv4; do
+            if [ -z "$(ls -A ../apk-$ARCH/*.apk 2>/dev/null)" ]; then
+              echo "⚠️ $ARCH: 无 apk 包,跳过打包"
+              continue
+            fi
+            mv ../apk-$ARCH .
+            ./makeself.sh apk-$ARCH/ ../output/openclash_apk_${ARCH}-${{ env.version }}.run "OpenClash $ARCH ${{ env.version }} (apk for 25.12)" ./install.sh
+          done
+
+      - name: Check file sizes
+        run: |
+          ls -lh output/*.run
 
       - name: Upload run files as release assets
         uses: softprops/action-gh-release@v2.1.0
         with:
           tag_name: ${{ env.version }}
           name: "OpenClash-${{ env.version }}"
-          files: makeself/*.run
+          files: output/*.run
+          body: |
+            OpenClash for OpenWrt / ImmortalWrt
+
+            分包策略:
+            - openclash_ipk_*.run → 24.10 构建 (opkg 安装 .ipk)
+            - openclash_apk_*.run → 25.12 构建 (apk 安装 .apk)
+
+            文件名标识:
+            - _ipk_ → 仅供 24.10 抓取
+            - _apk_ → 仅供 25.12 抓取
+
+            源仓库: https://github.com/vernesong/OpenClash
           token: ${{ secrets.GITHUB_TOKEN }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

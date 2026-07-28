@@ -1,20 +1,12 @@
 #=================================================
 # https://github.com/wukongdaily/RunFilesBuilder
-# Modified by Shaw-fung: added arm_cortex-a7_neon-vfpv4 support + daily cron
-# Description: Build RunFiles using GitHub Actions
-# Lisence: MIT
-# Author: wukongdaily
-# Blog: wkdaily.cpolar.cn
+# Modified: split ipk/apk packages for 24.10/25.12
+# Source: dl.openwrt.ai kiddin9 feed
 #=================================================
 name: Make ShadowsocksPlus+ run files
 
 on:
   workflow_dispatch:
-    inputs:
-      package_version:
-        description: '这里是包版本'
-        required: false
-        default: 'packages-24.10'
   schedule:
     - cron: '0 3 * * *'
 
@@ -26,282 +18,237 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v3
 
-      - name: Create directories for x86_64 and a53 and arm and set PACKAGE_VERSION
+      - name: 下载 24.10 ipk 包 (SSRP)
         run: |
-          mkdir -p x86_64/depends a53/depends arm/depends
-          package_version="${{ github.event.inputs.package_version }}"
-          if [ -z "$package_version" ]; then
-            package_version="packages-24.10"
-          fi
-          echo "PACKAGE_VERSION=$package_version" >> $GITHUB_ENV
-          wget -O x86_64/depends/libopenssl3.ipk https://github.com/wkccd/build/releases/download/pw1/libopenssl3_3.0.16-1_x86_64.ipk
-          wget -O a53/depends/libopenssl3.ipk https://github.com/wkccd/build/releases/download/pw1/libopenssl3_3.0.16-1_aarch64_cortex-a53.ipk
-
-      - name: Download ipk files for x86_64 and a53
-        run: |
-          echo "Get PACKAGE_VERSION=$PACKAGE_VERSION"
-          
-          FILE_PREFIXES=("shadowsocks-libev-ss-server" "dns2tcp" "lua-neturl" "chinadns-ng" "dns2socks" "hysteria" "ipt2socks" "microsocks" "mosdns" "naiveproxy" "redsocks2" "shadowsocksr-libev" "shadowsocks-rust" "shadow-tls" "simple-obfs-client" "tcping" "trojan" "tuic-client" "v2ray-plugin" "xray-core" "luci-app-ssr-plus")
-          EXCLUDE_PREFIXES=("luci-app-chinadns-ng" "luci-app-microsocks" "luci-app-mosdns" "luci-app-naiveproxy" "luci-app-redsocks2" "luci-app-shadowsocks")
-          
-          BASE_URL_X86="https://dl.openwrt.ai/$PACKAGE_VERSION/x86_64/kiddin9/"
-          echo "Fetching x86 directory page from $BASE_URL_X86"
-          wget -qO- "$BASE_URL_X86" | \
-          while IFS= read -r LINE; do
-              for PREFIX in "${FILE_PREFIXES[@]}"; do
-                  if [[ "$LINE" == *"$PREFIX"* ]]; then
-                      FILE=$(echo "$LINE" | grep -oP 'href="\K[^"]*')
-                      if [[ -z "$FILE" ]]; then
-                          # echo "No file found in line, skipping"
-                          continue
-                      fi
-                      exclude_file=false
-                      for exclude_prefix in "${EXCLUDE_PREFIXES[@]}"; do
-                          if [[ "$FILE" == $exclude_prefix* ]]; then
-                              exclude_file=true
-                              break
-                          fi
-                      done
-                      if $exclude_file; then
-                          echo "Skip file: $FILE"
-                          continue
-                      fi
-                      FILE_URL="${BASE_URL_X86}${FILE}"
-                      echo "Found file: $FILE_URL"
-                      curl -L --fail "$FILE_URL" -o "x86_64/depends/$(basename $FILE_URL)" -#
-                    fi
-              done
-          done
-
-          BASE_URL_A53="https://dl.openwrt.ai/$PACKAGE_VERSION/aarch64_cortex-a53/kiddin9/"
-          echo "Fetching a53 directory page from $BASE_URL_A53"
-          wget -qO- "$BASE_URL_A53" | \
-          while IFS= read -r LINE; do
-              for PREFIX in "${FILE_PREFIXES[@]}"; do
-                  if [[ "$LINE" == *"$PREFIX"* ]]; then
-                      FILE=$(echo "$LINE" | grep -oP 'href="\K[^"]*')
-                      if [[ -z "$FILE" ]]; then
-                          # echo "No file found in line, skipping"
-                          continue
-                      fi
-                      exclude_file=false
-                      for exclude_prefix in "${EXCLUDE_PREFIXES[@]}"; do
-                          if [[ "$FILE" == $exclude_prefix* ]]; then
-                              exclude_file=true
-                              break
-                          fi
-                      done
-                      if $exclude_file; then
-                          echo "Skip file: $FILE"
-                          continue
-                      fi
-                      FILE_URL="${BASE_URL_A53}${FILE}"
-                      echo "Found file: $FILE_URL"
-                      curl -L --fail "$FILE_URL" -o "a53/depends/$(basename $FILE_URL)" -#
-                  fi
-              done
-          done
-
-      - name: Download ipk files for arm_cortex-a7_neon-vfpv4
-        run: |
-          echo "Get PACKAGE_VERSION=$PACKAGE_VERSION for arm"
-
           FILE_PREFIXES=("shadowsocks-libev-ss-server" "dns2tcp" "lua-neturl" "chinadns-ng" "dns2socks" "hysteria" "ipt2socks" "microsocks" "mosdns" "naiveproxy" "redsocks2" "shadowsocksr-libev" "shadowsocks-rust" "shadow-tls" "simple-obfs-client" "tcping" "trojan" "tuic-client" "v2ray-plugin" "xray-core" "luci-app-ssr-plus")
           EXCLUDE_PREFIXES=("luci-app-chinadns-ng" "luci-app-microsocks" "luci-app-mosdns" "luci-app-naiveproxy" "luci-app-redsocks2" "luci-app-shadowsocks")
 
-          BASE_URL_ARM="https://dl.openwrt.ai/$PACKAGE_VERSION/arm_cortex-a7_neon-vfpv4/kiddin9/"
-          echo "Fetching arm directory page from $BASE_URL_ARM"
-          wget -qO- "$BASE_URL_ARM" | \
-          while IFS= read -r LINE; do
+          for ARCH in x86_64 aarch64_cortex-a53 arm_cortex-a7_neon-vfpv4; do
+            mkdir -p "ipk-$ARCH/depends"
+
+            BASE_URL="https://dl.openwrt.ai/packages-24.10/${ARCH}/kiddin9/"
+            echo "Fetching $ARCH kiddin9 from $BASE_URL"
+            page=$(wget -qO- "$BASE_URL")
+            while IFS= read -r LINE; do
               for PREFIX in "${FILE_PREFIXES[@]}"; do
-                  if [[ "$LINE" == *"$PREFIX"* ]]; then
-                      FILE=$(echo "$LINE" | grep -oP 'href="\K[^"]*')
-                      if [[ -z "$FILE" ]]; then
-                          continue
-                      fi
-                      exclude_file=false
-                      for exclude_prefix in "${EXCLUDE_PREFIXES[@]}"; do
-                          if [[ "$FILE" == $exclude_prefix* ]]; then
-                              exclude_file=true
-                              break
-                          fi
-                      done
-                      if $exclude_file; then
-                          echo "Skip file: $FILE"
-                          continue
-                      fi
-                      FILE_URL="${BASE_URL_ARM}${FILE}"
-                      echo "Found file: $FILE_URL"
-                      curl -L --fail "$FILE_URL" -o "arm/depends/$(basename $FILE_URL)" -#
+                if [[ "$LINE" == *"$PREFIX"* ]]; then
+                  FILE=$(echo "$LINE" | grep -oP 'href="\K[^"]*')
+                  [[ -z "$FILE" ]] && continue
+                  exclude_file=false
+                  for exclude_prefix in "${EXCLUDE_PREFIXES[@]}"; do
+                    if [[ "$FILE" == $exclude_prefix* ]]; then
+                      exclude_file=true
+                      break
+                    fi
+                  done
+                  if $exclude_file; then
+                    continue
                   fi
+                  FILE_URL="${BASE_URL}${FILE}"
+                  echo "⬇️ $ARCH (24.10): $FILE"
+                  curl -sL --fail "$FILE_URL" -o "ipk-${ARCH}/depends/$(basename $FILE_URL)"
+                fi
               done
-          done
-        
-      - name: downloads libopenssl3 & libudns ipk
-        run: |
-          echo "downloading libopenssl3 ipk"
-          FILE_PREFIXES=("libopenssl3" "libudns")
-          BASE_URL_X86="https://dl.openwrt.ai/$PACKAGE_VERSION/x86_64/base/"
-          wget -qO- "$BASE_URL_X86" | \
-          while IFS= read -r LINE; do
-              for PREFIX in "${FILE_PREFIXES[@]}"; do
-                  if [[ "$LINE" == *"$PREFIX"* ]]; then
-                      FILE=$(echo "$LINE" | grep -oP 'href="\K[^"]*')
-                      if [[ -z "$FILE" ]]; then
-                          # echo "No file found in line, skipping"
-                          continue
-                      fi
-                      FILE_URL="${BASE_URL_X86}${FILE}"
-                      echo "Found file: $FILE_URL"
-                      curl -L --fail "$FILE_URL" -o "x86_64/depends/$(basename $FILE_URL)" -#
-                    fi
+            done <<< "$page"
+
+            # base 目录
+            BASE_URL="https://dl.openwrt.ai/packages-24.10/${ARCH}/base/"
+            page=$(wget -qO- "$BASE_URL")
+            while IFS= read -r LINE; do
+              for PREFIX in "libopenssl3" "libudns"; do
+                if [[ "$LINE" == *"$PREFIX"* ]]; then
+                  FILE=$(echo "$LINE" | grep -oP 'href="\K[^"]*')
+                  [[ -z "$FILE" ]] && continue
+                  FILE_URL="${BASE_URL}${FILE}"
+                  echo "⬇️ $ARCH (24.10 base): $FILE"
+                  curl -sL --fail "$FILE_URL" -o "ipk-${ARCH}/depends/$(basename $FILE_URL)"
+                fi
               done
-          done
-          BASE_URL_A53="https://dl.openwrt.ai/$PACKAGE_VERSION/aarch64_cortex-a53/base/"
-          wget -qO- "$BASE_URL_A53" | \
-          while IFS= read -r LINE; do
-              for PREFIX in "${FILE_PREFIXES[@]}"; do
-                  if [[ "$LINE" == *"$PREFIX"* ]]; then
-                      FILE=$(echo "$LINE" | grep -oP 'href="\K[^"]*')
-                      if [[ -z "$FILE" ]]; then
-                          # echo "No file found in line, skipping"
-                          continue
-                      fi
-                      FILE_URL="${BASE_URL_A53}${FILE}"
-                      echo "Found file: $FILE_URL"
-                      curl -L --fail "$FILE_URL" -o "a53/depends/$(basename $FILE_URL)" -#
-                    fi
+            done <<< "$page"
+
+            # packages 目录
+            BASE_URL="https://dl.openwrt.ai/packages-24.10/${ARCH}/packages/"
+            page=$(wget -qO- "$BASE_URL")
+            while IFS= read -r LINE; do
+              for PREFIX in "libudns"; do
+                if [[ "$LINE" == *"$PREFIX"* ]]; then
+                  FILE=$(echo "$LINE" | grep -oP 'href="\K[^"]*')
+                  [[ -z "$FILE" ]] && continue
+                  FILE_URL="${BASE_URL}${FILE}"
+                  echo "⬇️ $ARCH (24.10 packages): $FILE"
+                  curl -sL --fail "$FILE_URL" -o "ipk-${ARCH}/depends/$(basename $FILE_URL)"
+                fi
               done
-          done
-          echo "downloading libudns ipk"
-          BASE_URL_X86="https://dl.openwrt.ai/$PACKAGE_VERSION/x86_64/packages/"
-          wget -qO- "$BASE_URL_X86" | \
-          while IFS= read -r LINE; do
-              for PREFIX in "${FILE_PREFIXES[@]}"; do
-                  if [[ "$LINE" == *"$PREFIX"* ]]; then
-                      FILE=$(echo "$LINE" | grep -oP 'href="\K[^"]*')
-                      if [[ -z "$FILE" ]]; then
-                          # echo "No file found in line, skipping"
-                          continue
-                      fi
-                      FILE_URL="${BASE_URL_X86}${FILE}"
-                      echo "Found file: $FILE_URL"
-                      curl -L --fail "$FILE_URL" -o "x86_64/depends/$(basename $FILE_URL)" -#
-                    fi
-              done
-          done
-          BASE_URL_A53="https://dl.openwrt.ai/$PACKAGE_VERSION/aarch64_cortex-a53/packages/"
-          wget -qO- "$BASE_URL_A53" | \
-          while IFS= read -r LINE; do
-              for PREFIX in "${FILE_PREFIXES[@]}"; do
-                  if [[ "$LINE" == *"$PREFIX"* ]]; then
-                      FILE=$(echo "$LINE" | grep -oP 'href="\K[^"]*')
-                      if [[ -z "$FILE" ]]; then
-                          # echo "No file found in line, skipping"
-                          continue
-                      fi
-                      FILE_URL="${BASE_URL_A53}${FILE}"
-                      echo "Found file: $FILE_URL"
-                      curl -L --fail "$FILE_URL" -o "a53/depends/$(basename $FILE_URL)" -#
-                    fi
-              done
-          done
-          # ARM base and packages
-          BASE_URL_ARM_BASE="https://dl.openwrt.ai/$PACKAGE_VERSION/arm_cortex-a7_neon-vfpv4/base/"
-          wget -qO- "$BASE_URL_ARM_BASE" | \
-          while IFS= read -r LINE; do
-              for PREFIX in "${FILE_PREFIXES[@]}"; do
-                  if [[ "$LINE" == *"$PREFIX"* ]]; then
-                      FILE=$(echo "$LINE" | grep -oP 'href="\K[^"]*')
-                      if [[ -z "$FILE" ]]; then
-                          continue
-                      fi
-                      FILE_URL="${BASE_URL_ARM_BASE}${FILE}"
-                      echo "Found file: $FILE_URL"
-                      curl -L --fail "$FILE_URL" -o "arm/depends/$(basename $FILE_URL)" -#
-                  fi
-              done
-          done
-          BASE_URL_ARM_PKG="https://dl.openwrt.ai/$PACKAGE_VERSION/arm_cortex-a7_neon-vfpv4/packages/"
-          wget -qO- "$BASE_URL_ARM_PKG" | \
-          while IFS= read -r LINE; do
-              for PREFIX in "${FILE_PREFIXES[@]}"; do
-                  if [[ "$LINE" == *"$PREFIX"* ]]; then
-                      FILE=$(echo "$LINE" | grep -oP 'href="\K[^"]*')
-                      if [[ -z "$FILE" ]]; then
-                          continue
-                      fi
-                      FILE_URL="${BASE_URL_ARM_PKG}${FILE}"
-                      echo "Found file: $FILE_URL"
-                      curl -L --fail "$FILE_URL" -o "arm/depends/$(basename $FILE_URL)" -#
-                  fi
-              done
+            done <<< "$page"
           done
 
-      - name: List depends ipks
+          # 处理文件名 ~ 字符
+          for ARCH in x86_64 aarch64_cortex-a53 arm_cortex-a7_neon-vfpv4; do
+            pushd "ipk-$ARCH/depends" >/dev/null
+            for f in *~*.ipk; do
+              [ -e "$f" ] || continue
+              new_f=$(echo "$f" | tr '~' '-')
+              [ "$f" != "$new_f" ] && mv "$f" "$new_f"
+            done
+            popd >/dev/null
+          done
+
+          # 移除多余文件并移动主程序
+          for ARCH in x86_64 aarch64_cortex-a53 arm_cortex-a7_neon-vfpv4; do
+            rm -f "ipk-$ARCH/depends/luci-app-trojan-server"*
+            mv "ipk-$ARCH/depends/luci-app-ssr-plus"*.ipk "ipk-$ARCH/" 2>/dev/null || true
+          done
+
+      - name: 下载 25.12 兼容包 (SSRP)
         run: |
-          echo "List x86 depends ipk files"
-          rm x86_64/depends/luci-app-trojan-server*
-          ls -lh x86_64/depends/
-          echo "List a53 depends ipk files"
-          rm a53/depends/luci-app-trojan-server*
-          ls -lh a53/depends/
-          echo "List arm depends ipk files"
-          rm arm/depends/luci-app-trojan-server* 2>/dev/null || true
-          ls -lh arm/depends/
-          mv x86_64/depends/luci-app-ssr-plus*.ipk x86_64/
-          mv a53/depends/luci-app-ssr-plus*.ipk a53/
-          mv arm/depends/luci-app-ssr-plus*.ipk arm/
-          echo "查看a53目录"
-          ls a53/
-          echo "查看x86_64目录"
-          ls x86_64/
-          echo "查看arm目录"
-          ls arm/
+          FILE_PREFIXES=("shadowsocks-libev-ss-server" "dns2tcp" "lua-neturl" "chinadns-ng" "dns2socks" "hysteria" "ipt2socks" "microsocks" "mosdns" "naiveproxy" "redsocks2" "shadowsocksr-libev" "shadowsocks-rust" "shadow-tls" "simple-obfs-client" "tcping" "trojan" "tuic-client" "v2ray-plugin" "xray-core" "luci-app-ssr-plus")
+          EXCLUDE_PREFIXES=("luci-app-chinadns-ng" "luci-app-microsocks" "luci-app-mosdns" "luci-app-naiveproxy" "luci-app-redsocks2" "luci-app-shadowsocks")
+
+          for ARCH in x86_64 aarch64_cortex-a53 arm_cortex-a7_neon-vfpv4; do
+            mkdir -p "apk-$ARCH/depends"
+
+            BASE_URL="https://dl.openwrt.ai/packages-25.12/${ARCH}/kiddin9/"
+            echo "Fetching $ARCH kiddin9 from $BASE_URL"
+            page=$(wget -qO- "$BASE_URL")
+            while IFS= read -r LINE; do
+              for PREFIX in "${FILE_PREFIXES[@]}"; do
+                if [[ "$LINE" == *"$PREFIX"* ]]; then
+                  FILE=$(echo "$LINE" | grep -oP 'href="\K[^"]*')
+                  [[ -z "$FILE" ]] && continue
+                  exclude_file=false
+                  for exclude_prefix in "${EXCLUDE_PREFIXES[@]}"; do
+                    if [[ "$FILE" == $exclude_prefix* ]]; then
+                      exclude_file=true
+                      break
+                    fi
+                  done
+                  if $exclude_file; then
+                    continue
+                  fi
+                  FILE_URL="${BASE_URL}${FILE}"
+                  echo "⬇️ $ARCH (25.12): $FILE"
+                  curl -sL --fail "$FILE_URL" -o "apk-${ARCH}/depends/$(basename $FILE_URL)"
+                fi
+              done
+            done <<< "$page"
+
+            # base 目录
+            BASE_URL="https://dl.openwrt.ai/packages-25.12/${ARCH}/base/"
+            page=$(wget -qO- "$BASE_URL")
+            while IFS= read -r LINE; do
+              for PREFIX in "libopenssl3" "libudns"; do
+                if [[ "$LINE" == *"$PREFIX"* ]]; then
+                  FILE=$(echo "$LINE" | grep -oP 'href="\K[^"]*')
+                  [[ -z "$FILE" ]] && continue
+                  FILE_URL="${BASE_URL}${FILE}"
+                  echo "⬇️ $ARCH (25.12 base): $FILE"
+                  curl -sL --fail "$FILE_URL" -o "apk-${ARCH}/depends/$(basename $FILE_URL)"
+                fi
+              done
+            done <<< "$page"
+
+            # packages 目录
+            BASE_URL="https://dl.openwrt.ai/packages-25.12/${ARCH}/packages/"
+            page=$(wget -qO- "$BASE_URL")
+            while IFS= read -r LINE; do
+              for PREFIX in "libudns"; do
+                if [[ "$LINE" == *"$PREFIX"* ]]; then
+                  FILE=$(echo "$LINE" | grep -oP 'href="\K[^"]*')
+                  [[ -z "$FILE" ]] && continue
+                  FILE_URL="${BASE_URL}${FILE}"
+                  echo "⬇️ $ARCH (25.12 packages): $FILE"
+                  curl -sL --fail "$FILE_URL" -o "apk-${ARCH}/depends/$(basename $FILE_URL)"
+                fi
+              done
+            done <<< "$page"
+          done
+
+          # 处理文件名 ~ 字符
+          for ARCH in x86_64 aarch64_cortex-a53 arm_cortex-a7_neon-vfpv4; do
+            pushd "apk-$ARCH/depends" >/dev/null
+            for f in *~*.ipk; do
+              [ -e "$f" ] || continue
+              new_f=$(echo "$f" | tr '~' '-')
+              [ "$f" != "$new_f" ] && mv "$f" "$new_f"
+            done
+            popd >/dev/null
+          done
+
+          # 移除多余文件并移动主程序
+          for ARCH in x86_64 aarch64_cortex-a53 arm_cortex-a7_neon-vfpv4; do
+            rm -f "apk-$ARCH/depends/luci-app-trojan-server"*
+            mv "apk-$ARCH/depends/luci-app-ssr-plus"*.ipk "apk-$ARCH/" 2>/dev/null || true
+          done
 
       - name: Parse version from filename
         id: setver
         run: |
-          file=$(ls a53/luci-app-ssr-plus*.ipk 2>/dev/null | head -n1)
-          for file in a53/luci-app-ssr-plus*.ipk; do
-              base=${file##*/}         
-              tmp=${base#*_}           
-              tmp=${tmp%_all.ipk}       
-              version=${tmp/-/_}
-              echo "$version"
-              echo "ssrp_version=$version" >> $GITHUB_ENV
-              break
-          done
-          echo "版本号是：${ssrp_version}"
+          file=$(ls ipk-x86_64/luci-app-ssr-plus*.ipk 2>/dev/null | head -n1)
+          [ -z "$file" ] && file=$(ls ipk-aarch64_cortex-a53/luci-app-ssr-plus*.ipk 2>/dev/null | head -n1)
+          if [ -n "$file" ]; then
+            base=${file##*/}
+            tmp=${base#*_}
+            tmp=${tmp%_all.ipk}
+            version=${tmp/-/_}
+            version=${version//\~/-}
+            echo "ssrp_version=$version" >> $GITHUB_ENV
+            echo "版本号是：$version"
+          else
+            echo "❌ 无法提取版本号"
+            exit 1
+          fi
 
-      - name: Create install.sh 
-        run: |
-            echo -e "#!/bin/sh\n\nopkg update\nif [ \$? -ne 0 ]; then\n    echo \"update failed\"\n    exit 1\nfi\nopkg install depends/*.ipk --force-depends\nopkg install *.ipk --force-depends" > x86_64/install.sh
-            chmod +x x86_64/install.sh
-            cp x86_64/install.sh a53/
-            cp x86_64/install.sh arm/
-
-      - name: Clone makeself repo
+      - name: 创建 install.sh 并打包
         run: |
           git clone https://github.com/megastep/makeself.git
+          mkdir -p output
 
-      - name: Change Dir
-        run: |
-            mv -f x86_64/ makeself/
-            mv -f a53/ makeself/
-            mv -f arm/ makeself/
-            echo "移动后再查看makeself/的文件"
-            ls -lah makeself/
-
-      
-      - name: Create self-extracting archives
-        run: |
+          # ipk 包 (24.10)
+          for ARCH in x86_64 aarch64_cortex-a53 arm_cortex-a7_neon-vfpv4; do
+            if [ -z "$(ls -A ipk-$ARCH/luci-app-ssr-plus*.ipk 2>/dev/null)" ]; then
+              echo "⚠️ $ARCH (ipk): no main package, skip"
+              continue
+            fi
+            cat <<'EOF' > "ipk-$ARCH/install.sh"
+          #!/bin/sh
+          opkg update
+          if [ $? -ne 0 ]; then
+              echo "update failed"
+              exit 1
+          fi
+          opkg install depends/*.ipk --force-depends
+          opkg install *.ipk --force-depends
+          EOF
+            chmod +x "ipk-$ARCH/install.sh"
+            cp -r "ipk-$ARCH" makeself/
             cd makeself
-            ./makeself.sh x86_64/ ssrp_x86_64-${ssrp_version}.run "by github action" ./install.sh
-            ./makeself.sh a53/ ssrp_aarch64_cortex-a53-${ssrp_version}.run "by github action" ./install.sh
-            ./makeself.sh arm/ ssrp_arm_cortex-a7_neon-vfpv4-${ssrp_version}.run "by github action" ./install.sh
-                
-      
+            ./makeself.sh "ipk-$ARCH/" "../output/ssrp_${ssrp_version}_ipk_${ARCH}.run" "ssrp ${ARCH} v${ssrp_version} (ipk for 24.10)" ./install.sh
+            cd ..
+          done
+
+          # apk 包 (25.12)
+          for ARCH in x86_64 aarch64_cortex-a53 arm_cortex-a7_neon-vfpv4; do
+            if [ -z "$(ls -A apk-$ARCH/luci-app-ssr-plus*.ipk 2>/dev/null)" ]; then
+              echo "⚠️ $ARCH (apk): no main package, skip"
+              continue
+            fi
+            cat <<'EOF' > "apk-$ARCH/install.sh"
+          #!/bin/sh
+          if command -v apk >/dev/null 2>&1; then
+            apk add --no-cache --allow-untrusted depends/*.ipk *.ipk 2>/dev/null || true
+          else
+            opkg update
+            opkg install depends/*.ipk --force-depends
+            opkg install *.ipk --force-depends
+          fi
+          EOF
+            chmod +x "apk-$ARCH/install.sh"
+            cp -r "apk-$ARCH" makeself/
+            cd makeself
+            ./makeself.sh "apk-$ARCH/" "../output/ssrp_${ssrp_version}_apk_${ARCH}.run" "ssrp ${ARCH} v${ssrp_version} (apk for 25.12)" ./install.sh
+            cd ..
+          done
+
       - name: Set tag name
         id: vars
         run: |
@@ -313,8 +260,19 @@ jobs:
         with:
           tag_name: "ShadowsocksPlus+"
           name: SSRP-${{ env.ssrp_version }}
-          body: "![Github](https://img.shields.io/badge/SSRP.run-123456?logo=github&logoColor=fff&labelColor=blue&style=for-the-badge) [![Github](https://img.shields.io/badge/国内加速站下载-FC7C0D?logo=github&logoColor=fff&labelColor=000&style=for-the-badge)](https://wkdaily.cpolar.cn/archives/1) ![GitHub Downloads (all assets, specific tag)](https://img.shields.io/github/downloads/wukongdaily/RunFilesBuilder/ShadowsocksPlus%2B/total?style=for-the-badge&labelColor=black&color=%2325c2a0)"
-          files: makeself/*.run
+          body: |
+            ShadowsocksR Plus+ (luci-app-ssr-plus)
+
+            分包策略:
+            - ssrp_*_ipk_*.run → 24.10 构建 (opkg 安装 .ipk)
+            - ssrp_*_apk_*.run → 25.12 构建 (apk 安装 .ipk 兼容)
+
+            文件名标识:
+            - _ipk_ → 仅供 24.10 抓取
+            - _apk_ → 仅供 25.12 抓取
+
+            源: dl.openwrt.ai (kiddin9 feed)
+          files: output/*.run
           token: ${{ secrets.GITHUB_TOKEN }}
 
         env:

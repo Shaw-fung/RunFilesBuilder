@@ -1,6 +1,7 @@
 #=================================================
 # https://github.com/wukongdaily/RunFilesBuilder
 # Modified by Shaw-fung: added arm_cortex-a7_neon-vfpv4 support + daily cron
+# Modified again: split ipk/apk packages for 24.10/25.12
 # Description: Build RunFiles using GitHub Actions
 # Lisence: MIT
 # Author: wukongdaily
@@ -21,82 +22,82 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v3
-      
+
       - name: Fetch latest release tag from openlist2
         id: fetch_latest_tag
         run: |
           latest_tag=$(curl -s https://api.github.com/repos/sbwml/luci-app-openlist2/releases/latest | jq -r '.tag_name')
           echo "LATEST_TAG=$latest_tag" >> $GITHUB_ENV
-          
+
       - name: Clone makeself repository
         run: git clone https://github.com/megastep/makeself.git
 
-      - name: Download latest openlist2 files
+      - name: Download 24.10 ipk tar.gz
         run: |
-          # 下载最新 release 的两个架构包
-          curl -LO $(curl -s https://api.github.com/repos/sbwml/luci-app-openlist2/releases/latest | grep -oP '"browser_download_url":\s*".*openwrt-24.10-aarch64_cortex-a53.tar.gz"' | cut -d '"' -f 4) 
-          curl -LO $(curl -s https://api.github.com/repos/sbwml/luci-app-openlist2/releases/latest | grep -oP '"browser_download_url":\s*".*openwrt-24.10-x86_64.tar.gz"' | cut -d '"' -f 4)
-          curl -LO $(curl -s https://api.github.com/repos/sbwml/luci-app-openlist2/releases/latest | grep -oP '"browser_download_url":\s*".*openwrt-24.10-arm_cortex-a7_neon-vfpv4.tar.gz"' | cut -d '"' -f 4)
-          # 解压并分别重命名 packages_ci 目录
-          tar -xvzf *aarch64_cortex-a53.tar.gz
-          mv packages_ci openlist2_aarch64_cortex-a53
-          tar -xvzf *x86_64.tar.gz
-          mv packages_ci openlist2_x86_64
-          tar -xvzf *arm_cortex-a7_neon-vfpv4.tar.gz
-          mv packages_ci openlist2_arm_cortex-a7_neon-vfpv4
+          RELEASE_INFO=$(curl -s https://api.github.com/repos/sbwml/luci-app-openlist2/releases/latest)
+          for ARCH in aarch64_cortex-a53 x86_64 arm_cortex-a7_neon-vfpv4; do
+            URL=$(echo "$RELEASE_INFO" | python3 -c "
+import json,sys
+d=json.load(sys.stdin)
+arch='$ARCH'
+for a in d['assets']:
+    if arch in a['name'] and '24.10' in a['name'] and a['name'].endswith('.tar.gz'):
+        print(a['browser_download_url'])
+        break
+")
+            if [ -n "$URL" ]; then
+              echo "⬇️ $ARCH (24.10 ipk): $(basename $URL)"
+              mkdir -p "ipk-$ARCH"
+              curl -sL -o "${ARCH}_24.10.tar.gz" "$URL"
+              tar -xzf "${ARCH}_24.10.tar.gz" -C "ipk-$ARCH" --strip-components=1
+              rm -f "${ARCH}_24.10.tar.gz"
+              # 处理 ~ 字符
+              pushd "ipk-$ARCH" >/dev/null
+              for f in *~*.ipk; do
+                [ -e "$f" ] || continue
+                new_f=$(echo "$f" | tr -d '~')
+                [ "$f" != "$new_f" ] && mv "$f" "$new_f"
+              done
+              popd >/dev/null
+              echo "  ipk 文件数: $(ls ipk-$ARCH/*.ipk 2>/dev/null | wc -l)"
+            else
+              echo "⚠️ $ARCH: 24.10 ipk tar.gz not found"
+            fi
+          done
 
-      - name: Organize files for aarch64_cortex-a53&x86_64&arm
+      - name: Download 25.12 apk tar.gz
         run: |
-          # 保存当前路径并进入目标目录
-          pushd "openlist2_x86_64" >/dev/null || exit 1
-          for file in *~*.ipk; do
-          [ -e "$file" ] || continue
-          # 构造新文件名，去除 ~ 字符
-          new_file="$(echo "$file" | tr -d '~')"
-          # 如果目标文件名已存在，则提示并跳过
-          if [ -e "$new_file" ]; then
-          echo "目标文件已存在，跳过: $new_file"
-          continue
-          fi
-          # 重命名文件
-          mv "$file" "$new_file"
-          echo "已重命名: $file -> $new_file"
+          RELEASE_INFO=$(curl -s https://api.github.com/repos/sbwml/luci-app-openlist2/releases/latest)
+          for ARCH in aarch64_cortex-a53 x86_64 arm_cortex-a7_neon-vfpv4; do
+            URL=$(echo "$RELEASE_INFO" | python3 -c "
+import json,sys
+d=json.load(sys.stdin)
+arch='$ARCH'
+for a in d['assets']:
+    if arch in a['name'] and '25.12' in a['name'] and a['name'].endswith('.tar.gz'):
+        print(a['browser_download_url'])
+        break
+")
+            if [ -n "$URL" ]; then
+              echo "⬇️ $ARCH (25.12 apk): $(basename $URL)"
+              mkdir -p "apk-$ARCH"
+              curl -sL -o "${ARCH}_25.12.tar.gz" "$URL"
+              tar -xzf "${ARCH}_25.12.tar.gz" -C "apk-$ARCH" --strip-components=1
+              rm -f "${ARCH}_25.12.tar.gz"
+              echo "  apk 文件数: $(ls apk-$ARCH/*.apk 2>/dev/null | wc -l)"
+            else
+              echo "⚠️ $ARCH: 25.12 apk tar.gz not found"
+            fi
           done
-          popd >/dev/null
-          pushd "openlist2_aarch64_cortex-a53" >/dev/null || exit 1
-          for file in *~*.ipk; do
-          [ -e "$file" ] || continue
-          # 构造新文件名，去除 ~ 字符
-          new_file="$(echo "$file" | tr -d '~')"
-          # 如果目标文件名已存在，则提示并跳过
-          if [ -e "$new_file" ]; then
-          echo "目标文件已存在，跳过: $new_file"
-          continue
-          fi
-          # 重命名文件
-          mv "$file" "$new_file"
-          echo "已重命名: $file -> $new_file"
-          done
-          popd >/dev/null
-          pushd "openlist2_arm_cortex-a7_neon-vfpv4" >/dev/null || exit 1
-          for file in *~*.ipk; do
-          [ -e "$file" ] || continue
-          # 构造新文件名，去除 ~ 字符
-          new_file="$(echo "$file" | tr -d '~')"
-          # 如果目标文件名已存在，则提示并跳过
-          if [ -e "$new_file" ]; then
-          echo "目标文件已存在，跳过: $new_file"
-          continue
-          fi
-          # 重命名文件
-          mv "$file" "$new_file"
-          echo "已重命名: $file -> $new_file"
-          done
-          popd >/dev/null
-          
-      - name: Create install.sh scripts
+
+      - name: Create install.sh and pack (ipk 分包 - 24.10)
         run: |
-          cat <<EOF > openlist2_x86_64/install.sh
+          for ARCH in x86_64 aarch64_cortex-a53 arm_cortex-a7_neon-vfpv4; do
+            if [ -z "$(ls -A ipk-$ARCH/*.ipk 2>/dev/null)" ]; then
+              echo "⚠️ $ARCH: 无 ipk 包,跳过打包"
+              continue
+            fi
+            cat <<'EOF' > "ipk-$ARCH/install.sh"
           #!/bin/sh
           opkg update
           if [ $? -ne 0 ]; then
@@ -105,33 +106,62 @@ jobs:
           fi
           opkg install *.ipk
           EOF
-          chmod +x openlist2_x86_64/install.sh
-          cp openlist2_x86_64/install.sh openlist2_aarch64_cortex-a53/install.sh
-          cp openlist2_x86_64/install.sh openlist2_arm_cortex-a7_neon-vfpv4/install.sh
-          
-      - name: Move openlist2 directories to makeself
-        run: |
-          mv openlist2_x86_64 makeself/
-          mv openlist2_aarch64_cortex-a53 makeself/
-          mv openlist2_arm_cortex-a7_neon-vfpv4 makeself/
-      - name: Create self-extracting packages
-        run: |
+            chmod +x "ipk-$ARCH/install.sh"
+          done
+          mkdir -p output
           cd makeself
-          ./makeself.sh openlist2_x86_64/ openlist2_${{ env.LATEST_TAG }}_x86_64.run "by github action" ./install.sh
-          ./makeself.sh openlist2_aarch64_cortex-a53/ openlist2_${{ env.LATEST_TAG }}_aarch64_cortex-a53.run "by github action" ./install.sh
-          ./makeself.sh openlist2_arm_cortex-a7_neon-vfpv4/ openlist2_${{ env.LATEST_TAG }}_arm_cortex-a7_neon-vfpv4.run "by github action" ./install.sh
-          
+          for ARCH in x86_64 aarch64_cortex-a53 arm_cortex-a7_neon-vfpv4; do
+            if [ -z "$(ls -A ../ipk-$ARCH/*.ipk 2>/dev/null)" ]; then
+              continue
+            fi
+            mv ../ipk-$ARCH .
+            ./makeself.sh ipk-$ARCH/ ../output/openlist2_${{ env.LATEST_TAG }}_ipk_${ARCH}.run "openlist2 ${{ env.LATEST_TAG }} ${ARCH} (ipk for 24.10)" ./install.sh
+          done
+
+      - name: Create install.sh and pack (apk 分包 - 25.12)
+        run: |
+          for ARCH in x86_64 aarch64_cortex-a53 arm_cortex-a7_neon-vfpv4; do
+            if [ -z "$(ls -A apk-$ARCH/*.apk 2>/dev/null)" ]; then
+              echo "⚠️ $ARCH: 无 apk 包,跳过打包"
+              continue
+            fi
+            cat <<'EOF' > "apk-$ARCH/install.sh"
+          #!/bin/sh
+          apk add --no-cache --allow-untrusted *.apk || true
+          EOF
+            chmod +x "apk-$ARCH/install.sh"
+          done
+          cd makeself
+          for ARCH in x86_64 aarch64_cortex-a53 arm_cortex-a7_neon-vfpv4; do
+            if [ -z "$(ls -A ../apk-$ARCH/*.apk 2>/dev/null)" ]; then
+              continue
+            fi
+            mv ../apk-$ARCH .
+            ./makeself.sh apk-$ARCH/ ../output/openlist2_${{ env.LATEST_TAG }}_apk_${ARCH}.run "openlist2 ${{ env.LATEST_TAG }} ${ARCH} (apk for 25.12)" ./install.sh
+          done
+
       - name: Check file sizes
         run: |
-          ls -lh makeself/openlist2_*.run
-          
+          ls -lh output/*.run
+
       - name: Upload run files as release assets
         uses: softprops/action-gh-release@v2.1.0
         with:
           tag_name: openlist2
           name: "luci-app-openlist2"
-          files: makeself/*.run
+          files: output/*.run
+          body: |
+            luci-app-openlist2 for OpenWrt / ImmortalWrt
+
+            分包策略:
+            - openlist2_*_ipk_*.run → 24.10 构建 (opkg 安装 .ipk)
+            - openlist2_*_apk_*.run → 25.12 构建 (apk 安装 .apk)
+
+            文件名标识:
+            - _ipk_ → 仅供 24.10 抓取
+            - _apk_ → 仅供 25.12 抓取
+
+            源仓库: https://github.com/sbwml/luci-app-openlist2
           token: ${{ secrets.GITHUB_TOKEN }}
-          body: "[![Github](https://img.shields.io/badge/可套用国内加速站下载-FC7C0D?logo=github&logoColor=fff&labelColor=000&style=for-the-badge)](https://wkdaily.cpolar.cn/archives/1)"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
