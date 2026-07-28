@@ -1,8 +1,10 @@
 #=================================================
 # Build RunFiles for luci-app-run (wukongdaily)
-# 支持 24.10 (ipk) 和 25.12 (apk) 两种格式
-# 单个 .run 包同时包含 ipk 和 apk，便于被
-# ImmortalWrt-ImageBuilder 的 24.10 和 25.12 构建拉取
+# 分包策略: ipk 和 apk 分别打包成独立的 .run 文件
+#   - *_ipk_*.run  → 供 24.10 (opkg) 构建拉取
+#   - *_apk_*.run  → 供 25.12 (apk) 构建拉取
+# 文件名 _all 标识通用架构,便于被
+# ImmortalWrt-ImageBuilder 的 build24.sh / build25.sh 抓取
 #=================================================
 name: Make luci-app-run run files
 
@@ -35,46 +37,57 @@ jobs:
 
       - name: Download luci-app-run packages (ipk + apk)
         run: |
-          mkdir -p luci-app-run
+          mkdir -p downloads
           # 下载最新 release 的全部资产 (同时包含 .ipk 和 .apk)
           curl -s https://api.github.com/repos/wukongdaily/luci-app-run/releases/latest \
             | jq -r '.assets[] | "\(.name) \(.browser_download_url)"' \
             | while read -r name url; do
                 echo "⬇️ Downloading: $name"
-                curl -sL -o "luci-app-run/$name" "$url"
+                curl -sL -o "downloads/$name" "$url"
               done
           echo "📦 Downloaded files:"
-          ls -lh luci-app-run/
+          ls -lh downloads/
 
-      - name: Create install.sh (兼容 opkg/apk 双包管理器)
+      - name: Organize ipk and apk into separate dirs
         run: |
-          cat <<'EOF' > luci-app-run/install.sh
+          # 24.10 分包: 仅含 .ipk
+          mkdir -p ipk-pkg
+          cp downloads/*.ipk ipk-pkg/ 2>/dev/null || echo "⚠️ No .ipk found"
+          cat <<'EOF' > ipk-pkg/install.sh
           #!/bin/sh
-          # luci-app-run installer
-          # 自动检测包管理器 (opkg for 24.10, apk for 25.12)
-          if command -v opkg >/dev/null 2>&1; then
-              echo "📦 Using opkg (24.10)"
-              opkg update
-              opkg install *.ipk --force-depends
-          elif command -v apk >/dev/null 2>&1; then
-              echo "📦 Using apk (25.12)"
-              apk add --no-cache --allow-untrusted *.apk || true
-          else
-              echo "❌ No supported package manager found (opkg/apk)"
-              exit 1
-          fi
+          # luci-app-run installer for OpenWrt 24.10 (opkg)
+          opkg update
+          opkg install *.ipk --force-depends
           EOF
-          chmod +x luci-app-run/install.sh
+          chmod +x ipk-pkg/install.sh
+          echo "📦 ipk-pkg contents:"
+          ls -lh ipk-pkg/
 
-      - name: Create self-extracting package
+          # 25.12 分包: 仅含 .apk
+          mkdir -p apk-pkg
+          cp downloads/*.apk apk-pkg/ 2>/dev/null || echo "⚠️ No .apk found"
+          cat <<'EOF' > apk-pkg/install.sh
+          #!/bin/sh
+          # luci-app-run installer for ImmortalWrt 25.12 (apk)
+          apk add --no-cache --allow-untrusted *.apk || true
+          EOF
+          chmod +x apk-pkg/install.sh
+          echo "📦 apk-pkg contents:"
+          ls -lh apk-pkg/
+
+      - name: Create self-extracting packages (分包)
         run: |
           mkdir -p output
           VERSION=$(date -u -d '+8 hour' +'%Y-%m-%d')
           cd makeself
-          mv ../luci-app-run .
-          # 文件名包含 _all 关键词,确保被 ImmortalWrt-ImageBuilder 的
-          # build24.sh / build25.sh 架构匹配逻辑 (_all) 下载
-          ./makeself.sh luci-app-run/ ../output/luci-app-run-${VERSION}_all.run "luci-app-run v${{ env.LATEST_TAG }} (ipk+apk)" ./install.sh
+
+          # ipk 分包 (24.10) - 文件名含 _ipk_ 和 _all 标识
+          mv ../ipk-pkg .
+          ./makeself.sh ipk-pkg/ ../output/luci-app-run-${VERSION}_ipk_all.run "luci-app-run v${{ env.LATEST_TAG }} (ipk for 24.10)" ./install.sh
+
+          # apk 分包 (25.12) - 文件名含 _apk_ 和 _all 标识
+          mv ../apk-pkg .
+          ./makeself.sh apk-pkg/ ../output/luci-app-run-${VERSION}_apk_all.run "luci-app-run v${{ env.LATEST_TAG }} (apk for 25.12)" ./install.sh
 
       - name: Check file sizes
         run: |
@@ -88,10 +101,16 @@ jobs:
           body: |
             luci-app-run: 轻量级 LuCI 应用,用于上传并运行 makeself 生成的 .run 安装程序。
 
-            - 支持 24.10 (ipk 格式)
-            - 支持 25.12 (apk 格式)
-            - 单个 .run 包同时包含两种格式,便于被 ImmortalWrt-ImageBuilder 构建拉取
-            - 源仓库: https://github.com/wukongdaily/luci-app-run
+            分包策略 (便于 ImmortalWrt-ImageBuilder 各版本精确抓取):
+            - `luci-app-run-<date>_ipk_all.run` → 24.10 构建 (opkg 安装 .ipk)
+            - `luci-app-run-<date>_apk_all.run` → 25.12 构建 (apk 安装 .apk)
+
+            文件名标识:
+            - `_ipk_` → 仅供 24.10 抓取
+            - `_apk_` → 仅供 25.12 抓取
+            - `_all` → 通用架构 (arm/aarch64 均可用)
+
+            源仓库: https://github.com/wukongdaily/luci-app-run
           files: output/*.run
           token: ${{ secrets.GITHUB_TOKEN }}
         env:
