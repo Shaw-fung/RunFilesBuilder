@@ -1,6 +1,3 @@
-#=================================================
-# Build RunFiles for linkease plugins (quickstart, unishare)
-#=================================================
 name: Make linkease plugins run files
 
 on:
@@ -9,80 +6,58 @@ on:
     - cron: '0 5 * * *'
 
 jobs:
-  make-run:
+  build:
     runs-on: ubuntu-22.04
-
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v3
-
+      - uses: actions/checkout@v3
       - name: Install makeself
         run: sudo apt-get update && sudo apt-get install -y makeself curl
 
-      - name: Download linkease plugin ipks
+      - name: Download ipks for all architectures
         run: |
-          BASE_URL="https://repo.istoreos.com/repo/all/store/"
-          mkdir -p linkease
-          
-          # 下载 quickstart
-          for pkg in luci-app-quickstart luci-i18n-quickstart-zh-cn; do
-            page=$(curl -s "$BASE_URL")
-            ipk=$(echo "$page" | grep -oP 'href="\K[^"]+\.ipk' | grep "^${pkg}_" | head -n1)
-            if [ -n "$ipk" ]; then
-              echo "⬇️ 下载: $ipk"
-              curl -sL -o "linkease/$ipk" "${BASE_URL}${ipk}"
-            else
-              echo "⚠️ 未找到: $pkg"
-            fi
-          done
-          
-          # unishare 从 nas-packages-luci 仓库下载
-          UNISHARE_URL="https://repo.istoreos.com/repo/all/nas-packages-luci/"
-          for pkg in luci-app-unishare webdav2 luci-i18n-unishare-zh-cn; do
-            page=$(curl -s "$UNISHARE_URL")
-            ipk=$(echo "$page" | grep -oP 'href="\K[^"]+\.ipk' | grep "^${pkg}_" | head -n1)
-            if [ -n "$ipk" ]; then
-              echo "⬇️ 下载: $ipk"
-              curl -sL -o "linkease/$ipk" "${UNISHARE_URL}${ipk}"
-            else
-              echo "⚠️ 未找到: $pkg (trying store repo)"
-              page2=$(curl -s "$BASE_URL")
-              ipk2=$(echo "$page2" | grep -oP 'href="\K[^"]+\.ipk' | grep "^${pkg}_" | head -n1)
-              if [ -n "$ipk2" ]; then
-                curl -sL -o "linkease/$ipk2" "${BASE_URL}${ipk2}"
+          for ARCH in x86_64 aarch64_cortex-a53 arm_cortex-a7_neon-vfpv4; do
+            mkdir -p "$ARCH"
+            BASE_URL="https://dl.openwrt.ai/packages-24.10/${ARCH}/kiddin9/"
+            page_content=$(curl -s "$BASE_URL")
+            for prefix in linkease luci-app-linkease luci-i18n-linkease-zh-cn luci-app-quickstart luci-i18n-quickstart-zh-cn luci-app-unishare luci-i18n-unishare-zh-cn webdav2; do
+              match=$(echo "$page_content" | grep -oP 'href="\K[^"]+\.ipk' | grep "^${prefix}_" | head -n1)
+              if [ -n "$match" ]; then
+                echo "⬇️ $ARCH: $match"
+                curl -sL -o "${ARCH}/${match}" "${BASE_URL}${match}"
+              else
+                echo "⚠️ $ARCH: not found: $prefix"
               fi
-            fi
+            done
           done
-          ls -lh linkease/
 
-      - name: Create install.sh
+      - name: Create install.sh and pack
         run: |
-          cat <<'EOF' > linkease/install.sh
+          for ARCH in x86_64 aarch64_cortex-a53 arm_cortex-a7_neon-vfpv4; do
+            cat <<EOF > "$ARCH/install.sh"
           #!/bin/sh
           opkg update
-          if [ $? -ne 0 ]; then
+          if [ \$? -ne 0 ]; then
               echo "update failed"
               exit 1
           fi
           opkg install *.ipk --force-depends
           EOF
-          chmod +x linkease/install.sh
-
-      - name: Clone makeself and pack
-        run: |
+            chmod +x "$ARCH/install.sh"
+          done
           git clone https://github.com/megastep/makeself.git
-          mv linkease makeself/
-          cd makeself
+          mkdir -p output
           VERSION=$(date -u -d '+8 hour' +'%Y-%m-%d')
-          ./makeself.sh linkease/ linkease-${VERSION}_all.run "linkease plugins v${VERSION}" ./install.sh
-          mkdir -p ../output
-          mv *.run ../output/
+          cd makeself
+          for ARCH in x86_64 aarch64_cortex-a53 arm_cortex-a7_neon-vfpv4; do
+            mv ../$ARCH .
+            ./makeself.sh $ARCH/ ../output/linkease_${VERSION}_${ARCH}.run "linkease plugins ${ARCH} v${VERSION}" ./install.sh
+          done
 
       - name: Upload to GitHub Release
         uses: softprops/action-gh-release@v2.1.0
         with:
           tag_name: "linkease-latest"
-          name: "linkease plugins (quickstart, unishare)"
+          name: "linkease plugins"
           body: "linkease plugins: quickstart, unishare, webdav2"
           files: output/*.run
           token: ${{ secrets.GITHUB_TOKEN }}

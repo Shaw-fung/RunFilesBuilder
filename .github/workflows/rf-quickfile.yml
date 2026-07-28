@@ -11,37 +11,23 @@ jobs:
     steps:
       - uses: actions/checkout@v3
       - name: Install makeself
-        run: sudo apt-get update && sudo apt-get install -y makeself curl jq
+        run: sudo apt-get update && sudo apt-get install -y makeself curl
 
-      - name: Download quickfile from GitHub releases
+      - name: Download ipks for all architectures
         run: |
-          mkdir -p x86_64 aarch64_cortex-a53 arm_cortex-a7_neon-vfpv4
-          
-          # 获取最新 release 信息
-          RELEASE_INFO=$(curl -s https://api.github.com/repos/sbwml/luci-app-quickfile/releases/latest)
-          
-          # 下载所有 tar.gz 资产并解压
           for ARCH in x86_64 aarch64_cortex-a53 arm_cortex-a7_neon-vfpv4; do
-            # 尝试匹配架构的 tar.gz
-            URL=$(echo "$RELEASE_INFO" | grep -oP '"browser_download_url":\s*"\K[^"]*'"$ARCH"'[^"]*\.tar\.gz' | head -n1)
-            if [ -n "$URL" ]; then
-              echo "⬇️ 下载 quickfile $ARCH: $URL"
-              curl -sL -o "/tmp/quickfile_${ARCH}.tar.gz" "$URL"
-              mkdir -p "/tmp/quickfile_${ARCH}"
-              tar -xzf "/tmp/quickfile_${ARCH}.tar.gz" -C "/tmp/quickfile_${ARCH}"
-              # 查找并复制 ipk 文件
-              find "/tmp/quickfile_${ARCH}" -name "*.ipk" -exec cp {} "${ARCH}/" \;
-            else
-              echo "⚠️ quickfile $ARCH: 未找到 tar.gz, 尝试从 dl.openwrt.ai 下载"
-              BASE_URL="https://dl.openwrt.ai/packages-24.10/${ARCH}/kiddin9/"
-              page=$(curl -s "$BASE_URL")
-              for prefix in luci-app-quickfile quickfile bash; do
-                match=$(echo "$page" | grep -oP 'href="\K[^"]+\.ipk' | grep "^${prefix}_" | head -n1)
-                if [ -n "$match" ]; then
-                  curl -sL -o "${ARCH}/${match}" "${BASE_URL}${match}"
-                fi
-              done
-            fi
+            mkdir -p "$ARCH"
+            BASE_URL="https://dl.openwrt.ai/packages-24.10/${ARCH}/kiddin9/"
+            page_content=$(curl -s "$BASE_URL")
+            for prefix in quickfile luci-app-quickfile bash; do
+              match=$(echo "$page_content" | grep -oP 'href="\K[^"]+\.ipk' | grep "^${prefix}_" | head -n1)
+              if [ -n "$match" ]; then
+                echo "⬇️ $ARCH: $match"
+                curl -sL -o "${ARCH}/${match}" "${BASE_URL}${match}"
+              else
+                echo "⚠️ $ARCH: not found: $prefix"
+              fi
+            done
           done
 
       - name: Create install.sh and pack
@@ -63,10 +49,8 @@ jobs:
           VERSION=$(date -u -d '+8 hour' +'%Y-%m-%d')
           cd makeself
           for ARCH in x86_64 aarch64_cortex-a53 arm_cortex-a7_neon-vfpv4; do
-            if [ "$(ls -A ../$ARCH/*.ipk 2>/dev/null)" ]; then
-              mv ../$ARCH .
-              ./makeself.sh $ARCH/ ../output/quickfile_${VERSION}_${ARCH}.run "QuickFile ${ARCH} v${VERSION}" ./install.sh
-            fi
+            mv ../$ARCH .
+            ./makeself.sh $ARCH/ ../output/quickfile_${VERSION}_${ARCH}.run "QuickFile ${ARCH} v${VERSION}" ./install.sh
           done
 
       - name: Upload to GitHub Release
