@@ -9,6 +9,8 @@ name: Make iStore run file
 
 on:
   workflow_dispatch:
+  schedule:
+    - cron: '0 4 * * *'
 
 jobs:
   make-run:

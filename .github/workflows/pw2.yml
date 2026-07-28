@@ -10,6 +10,8 @@ name: NEW Make Passwall2 run files
 
 on:
   workflow_dispatch:
+  schedule:
+    - cron: '0 1 * * *'
 
 jobs:
   build:
@@ -18,7 +20,7 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v3
-      
+
       - name: Fetch latest release tag from Passwall2
         id: fetch_latest_tag
         run: |
@@ -69,6 +71,41 @@ jobs:
           rm downloads/passwall_packages_ipk_aarch64_cortex-a53.zip
           cp downloads/luci-*.ipk passwall_aarch64/main/
 
+      - name: Organize files for arm_cortex-a7_neon-vfpv4
+        run: |
+          mkdir -p passwall_arm/depends passwall_arm/main
+          PACKAGE_VERSION="packages-24.10"
+          BASE_URL="https://dl.openwrt.ai/${PACKAGE_VERSION}/arm_cortex-a7_neon-vfpv4/kiddin9/"
+          echo "Fetching arm directory page from $BASE_URL"
+          FILE_PREFIXES=("passwall" "chinadns-ng" "dns2socks" "hysteria" "ipt2socks" "microsocks" "naiveproxy" "redsocks2" "shadowsocksr-libev" "shadowsocks-rust" "shadow-tls" "simple-obfs-client" "tcping" "trojan" "tuic-client" "v2ray-plugin" "xray-core" "dns2tcp" "lua-neturl" "mosdns" "shadowsocks-libev-ss-server")
+          EXCLUDE_PREFIXES=("luci-app-chinadns-ng" "luci-app-microsocks" "luci-app-mosdns" "luci-app-naiveproxy" "luci-app-redsocks2" "luci-app-shadowsocks")
+          wget -qO- "$BASE_URL" | \
+          while IFS= read -r LINE; do
+              for PREFIX in "${FILE_PREFIXES[@]}"; do
+                  if [[ "$LINE" == *"$PREFIX"* ]]; then
+                      FILE=$(echo "$LINE" | grep -oP 'href="\K[^"]*')
+                      if [[ -z "$FILE" ]]; then
+                          continue
+                      fi
+                      exclude_file=false
+                      for exclude_prefix in "${EXCLUDE_PREFIXES[@]}"; do
+                          if [[ "$FILE" == $exclude_prefix* ]]; then
+                              exclude_file=true
+                              break
+                          fi
+                      done
+                      if $exclude_file; then
+                          echo "Skip file: $FILE"
+                          continue
+                      fi
+                      FILE_URL="${BASE_URL}${FILE}"
+                      echo "Found file: $FILE_URL"
+                      curl -L --fail "$FILE_URL" -o "passwall_arm/depends/$(basename $FILE_URL)" -#
+                    fi
+              done
+          done
+          cp downloads/luci-*.ipk passwall_arm/main/
+
       - name: Create install.sh scripts
         run: |
           cat <<EOF > passwall_x86_64/install.sh
@@ -87,17 +124,20 @@ jobs:
           EOF
           chmod +x passwall_x86_64/install.sh
           cp passwall_x86_64/install.sh passwall_aarch64/install.sh
+          cp passwall_x86_64/install.sh passwall_arm/install.sh
 
       - name: Move passwall2 directories to makeself
         run: |
           mv passwall_x86_64 makeself/
           mv passwall_aarch64 makeself/
+          mv passwall_arm makeself/
 
       - name: Create self-extracting packages
         run: |
           cd makeself
           ./makeself.sh passwall_x86_64/ passwall2_x86_64_${{ env.LATEST_TAG }}.run "by github action" ./install.sh
           ./makeself.sh passwall_aarch64/ passwall2_aarch64_a53_${{ env.LATEST_TAG }}.run "by github action" ./install.sh
+          ./makeself.sh passwall_arm/ passwall2_arm_cortex-a7_neon-vfpv4_${{ env.LATEST_TAG }}.run "by github action" ./install.sh
 
       - name: Check file sizes
         run: |

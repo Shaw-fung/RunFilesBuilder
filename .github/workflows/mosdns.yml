@@ -10,6 +10,8 @@ name: Make MosDNS run files
 
 on:
   workflow_dispatch:
+  schedule:
+    - cron: '0 2 * * *'
 
 jobs:
   build:
@@ -18,13 +20,13 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v3
-      
+
       - name: Fetch latest release tag from mosdns
         id: fetch_latest_tag
         run: |
           latest_tag=$(curl -sk https://api.github.com/repos/sbwml/luci-app-mosdns/releases | grep "tag_name" | grep v5 | head -n 1 | awk -F ":" '{print $2}' | sed 's/\"//g;s/,//;s/ //')
           echo "LATEST_TAG=$latest_tag" >> $GITHUB_ENV
-       
+
 
       - name: Clone makeself repository
         run: git clone https://github.com/megastep/makeself.git
@@ -42,7 +44,7 @@ jobs:
           fi
 
           # 创建存放目录
-          mkdir -p mosdns_x86_64 mosdns_aarch64_cortex-a53
+          mkdir -p mosdns_x86_64 mosdns_aarch64_cortex-a53 mosdns_arm_cortex-a7_neon-vfpv4
 
           # 下载文件函数
           download_file() {
@@ -83,7 +85,46 @@ jobs:
 
           echo "Download completed."
 
-   
+      - name: Download arm_cortex-a7_neon-vfpv4 mosdns files
+        run: |
+          echo "Downloading MosDNS ARM IPK files..."
+          # 下载 arm_cortex-a7_neon-vfpv4 版本的 tar.gz
+          ARM_URL=$(curl -sk "https://api.github.com/repos/sbwml/luci-app-mosdns/releases" | grep "browser_download_url" | grep "$latest_tag" | grep "arm_cortex-a7_neon-vfpv4-openwrt-24.10.tar.gz" | head -1 | awk -F '"' '{print $4}')
+          if [ -n "$ARM_URL" ]; then
+            curl --connect-timeout 30 -m 600 -kLo "mosdns_arm_cortex-a7_neon-vfpv4.tar.gz" "$ARM_URL"
+            tar -xvzf mosdns_arm_cortex-a7_neon-vfpv4.tar.gz
+            cp packages_ci/*.ipk mosdns_arm_cortex-a7_neon-vfpv4/ 2>/dev/null || true
+            rm -rf packages_ci mosdns_arm_cortex-a7_neon-vfpv4.tar.gz
+          else
+            echo "ARM tar.gz not found, trying individual ipk downloads..."
+            # Fallback: 下载 arm 版本的单独 ipk
+            mosdns_arm=$(grep "browser_download_url" releases.txt | grep "mosdns_5" | grep "arm_cortex-a7.ipk" | head -1 | awk -F '"' '{print $4}')
+            v2dat_arm=$(grep "browser_download_url" releases.txt | grep "v2dat_" | grep "arm_cortex-a7.ipk" | head -1 | awk -F '"' '{print $4}')
+            luci_app=$(grep "browser_download_url" releases.txt | grep "luci-app-mosdns_" | head -1 | awk -F '"' '{print $4}')
+            luci_i18n=$(grep "browser_download_url" releases.txt | grep "luci-i18n-mosdns-zh-cn" | head -1 | awk -F '"' '{print $4}')
+            geoip=$(grep "browser_download_url" releases.txt | grep "v2ray-geoip" | head -1 | awk -F '"' '{print $4}')
+            geosite=$(grep "browser_download_url" releases.txt | grep "v2ray-geosite" | head -1 | awk -F '"' '{print $4}')
+            if [ -n "$mosdns_arm" ]; then
+              curl --connect-timeout 30 -m 600 -kLo "mosdns_arm_cortex-a7_neon-vfpv4/$(basename $mosdns_arm)" "$mosdns_arm"
+            fi
+            if [ -n "$v2dat_arm" ]; then
+              curl --connect-timeout 30 -m 600 -kLo "mosdns_arm_cortex-a7_neon-vfpv4/$(basename $v2dat_arm)" "$v2dat_arm"
+            fi
+            if [ -n "$luci_app" ]; then
+              curl --connect-timeout 30 -m 600 -kLo "mosdns_arm_cortex-a7_neon-vfpv4/$(basename $luci_app)" "$luci_app"
+            fi
+            if [ -n "$luci_i18n" ]; then
+              curl --connect-timeout 30 -m 600 -kLo "mosdns_arm_cortex-a7_neon-vfpv4/$(basename $luci_i18n)" "$luci_i18n"
+            fi
+            if [ -n "$geoip" ]; then
+              curl --connect-timeout 30 -m 600 -kLo "mosdns_arm_cortex-a7_neon-vfpv4/$(basename $geoip)" "$geoip"
+            fi
+            if [ -n "$geosite" ]; then
+              curl --connect-timeout 30 -m 600 -kLo "mosdns_arm_cortex-a7_neon-vfpv4/$(basename $geosite)" "$geosite"
+            fi
+          fi
+          echo "ARM download completed."
+
       - name: Create install.sh scripts
         run: |
           cat <<EOF > mosdns_x86_64/install.sh
@@ -97,19 +138,20 @@ jobs:
           EOF
           chmod +x mosdns_x86_64/install.sh
           cp mosdns_x86_64/install.sh mosdns_aarch64_cortex-a53/install.sh
-          
+          cp mosdns_x86_64/install.sh mosdns_arm_cortex-a7_neon-vfpv4/install.sh
 
       - name: Move mosdns directories to makeself
         run: |
           mv mosdns_x86_64 makeself/
           mv mosdns_aarch64_cortex-a53 makeself/
+          mv mosdns_arm_cortex-a7_neon-vfpv4 makeself/
 
       - name: Create self-extracting packages
         run: |
           cd makeself
           ./makeself.sh mosdns_x86_64/ mosdns_${{ env.LATEST_TAG }}_x86_64.run "by github action" ./install.sh
           ./makeself.sh mosdns_aarch64_cortex-a53/ mosdns_${{ env.LATEST_TAG }}_aarch64_cortex-a53.run "by github action" ./install.sh
-          
+          ./makeself.sh mosdns_arm_cortex-a7_neon-vfpv4/ mosdns_${{ env.LATEST_TAG }}_arm_cortex-a7_neon-vfpv4.run "by github action" ./install.sh
 
       - name: Check file sizes
         run: |
@@ -121,7 +163,7 @@ jobs:
           extra_content="![Github](https://img.shields.io/badge/mosdns.run-123456?logo=github&logoColor=fff&labelColor=yellow&style=for-the-badge) [![Github](https://img.shields.io/badge/国内加速站下载-FC7C0D?logo=github&logoColor=fff&labelColor=000&style=for-the-badge)](https://wkdaily.cpolar.cn/archives/1) ![GitHub Downloads (all assets, specific tag)](https://img.shields.io/github/downloads/wukongdaily/RunFilesBuilder/${{ env.LATEST_TAG }}/total?style=for-the-badge&labelColor=black&color=%2325c2a0)"
           sed -i "1i$extra_content" "${{ github.workspace }}/common.md"
 
-    
+
       - name: Upload run files as release assets
         uses: softprops/action-gh-release@v2.1.0
         with:

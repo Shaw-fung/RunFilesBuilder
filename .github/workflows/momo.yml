@@ -10,6 +10,8 @@ name: Make momo run files 24.10
 
 on:
   workflow_dispatch:
+  schedule:
+    - cron: '0 4 * * *'
 
 jobs:
   build:
@@ -32,14 +34,17 @@ jobs:
         run: |
           curl -LO $(curl -s https://api.github.com/repos/nikkinikki-org/OpenWrt-momo/releases/latest | grep -oP '"browser_download_url":\s*".*momo_aarch64_cortex-a53-openwrt-24.10.tar.gz"' | cut -d '"' -f 4)
           curl -LO $(curl -s https://api.github.com/repos/nikkinikki-org/OpenWrt-momo/releases/latest | grep -oP '"browser_download_url":\s*".*momo_x86_64-openwrt-24.10.tar.gz"' | cut -d '"' -f 4)
+          curl -LO $(curl -s https://api.github.com/repos/nikkinikki-org/OpenWrt-momo/releases/latest | grep -oP '"browser_download_url":\s*".*momo_arm_cortex-a7_neon-vfpv4-openwrt-24.10.tar.gz"' | cut -d '"' -f 4)
           tar --one-top-level=momo_aarch64_cortex-a53-openwrt-24.10 -xvzf momo_aarch64_cortex-a53-openwrt-24.10.tar.gz
           tar --one-top-level=momo_x86_64-openwrt-24.10 -xvzf momo_x86_64-openwrt-24.10.tar.gz
+          tar --one-top-level=momo_arm_cortex-a7_neon-vfpv4-openwrt-24.10 -xvzf momo_arm_cortex-a7_neon-vfpv4-openwrt-24.10.tar.gz
 
-      - name: Organize files for aarch64_cortex-a53&x86_64
+      - name: Organize files for aarch64_cortex-a53&x86_64&arm
         run: |
-          mkdir momo_x86_64 momo_aarch64_cortex-a53
+          mkdir momo_x86_64 momo_aarch64_cortex-a53 momo_arm_cortex-a7_neon-vfpv4
           cp momo_x86_64-openwrt-24.10/*.ipk momo_x86_64/
           cp momo_aarch64_cortex-a53-openwrt-24.10/*.ipk momo_aarch64_cortex-a53/
+          cp momo_arm_cortex-a7_neon-vfpv4-openwrt-24.10/*.ipk momo_arm_cortex-a7_neon-vfpv4/
           # 保存当前路径并进入目标目录
           pushd "momo_x86_64" >/dev/null || exit 1
           for file in *~*.ipk; do
@@ -72,6 +77,22 @@ jobs:
           echo "已重命名: $file -> $new_file"
           done
           popd >/dev/null
+
+          pushd "momo_arm_cortex-a7_neon-vfpv4" >/dev/null || exit 1
+          for file in *~*.ipk; do
+          [ -e "$file" ] || continue
+          # 构造新文件名，去除 ~ 字符
+          new_file="$(echo "$file" | tr -d '~')"
+          # 如果目标文件名已存在，则提示并跳过
+          if [ -e "$new_file" ]; then
+          echo "目标文件已存在，跳过: $new_file"
+          continue
+          fi
+          # 重命名文件
+          mv "$file" "$new_file"
+          echo "已重命名: $file -> $new_file"
+          done
+          popd >/dev/null
           
 
       - name: Create install.sh scripts
@@ -87,18 +108,21 @@ jobs:
           EOF
           chmod +x momo_x86_64/install.sh
           cp momo_x86_64/install.sh momo_aarch64_cortex-a53/install.sh
+          cp momo_x86_64/install.sh momo_arm_cortex-a7_neon-vfpv4/install.sh
           
 
       - name: Move momo directories to makeself
         run: |
           mv momo_x86_64 makeself/
           mv momo_aarch64_cortex-a53 makeself/
+          mv momo_arm_cortex-a7_neon-vfpv4 makeself/
 
       - name: Create self-extracting packages
         run: |
           cd makeself
           ./makeself.sh momo_x86_64/ momo_${{ env.LATEST_TAG }}_x86_64.run "by github action" ./install.sh
           ./makeself.sh momo_aarch64_cortex-a53/ momo_${{ env.LATEST_TAG }}_aarch64_cortex-a53.run "by github action" ./install.sh
+          ./makeself.sh momo_arm_cortex-a7_neon-vfpv4/ momo_${{ env.LATEST_TAG }}_arm_cortex-a7_neon-vfpv4.run "by github action" ./install.sh
           
 
       - name: Check file sizes

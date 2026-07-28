@@ -9,6 +9,8 @@ name: Make DAE run files
 
 on:
   workflow_dispatch:
+  schedule:
+    - cron: '0 2 * * *'
 
 jobs:
   make-run:
@@ -32,6 +34,7 @@ jobs:
           cp shell/install.sh x86_64/install.sh
           cp shell/install.sh aarch64_generic/install.sh
           cp shell/install.sh aarch64_cortex-a53/install.sh
+          cp shell/install.sh arm_cortex-a7_neon-vfpv4/install.sh
 
       - name: 🔍 提取版本号并打包
         id: pack
@@ -50,7 +53,7 @@ jobs:
           echo "version=$VERSION" >> $GITHUB_OUTPUT
 
           # 打包两个平台
-          for PLATFORM in x86_64 aarch64_generic aarch64_cortex-a53; do
+          for PLATFORM in x86_64 aarch64_generic aarch64_cortex-a53 arm_cortex-a7_neon-vfpv4; do
             makeself "$PLATFORM" "output/luci-app-dae-${VERSION}_${PLATFORM}.run" \
               "dae ${PLATFORM} Installer v${VERSION}" ./install.sh
           done

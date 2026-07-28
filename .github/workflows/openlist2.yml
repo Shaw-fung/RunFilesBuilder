@@ -10,6 +10,8 @@ name: Make Openlist2 Run File
 
 on:
   workflow_dispatch:
+  schedule:
+    - cron: '0 5 * * *'
 
 jobs:
   build:
@@ -33,13 +35,16 @@ jobs:
           # 下载最新 release 的两个架构包
           curl -LO $(curl -s https://api.github.com/repos/sbwml/luci-app-openlist2/releases/latest | grep -oP '"browser_download_url":\s*".*openwrt-24.10-aarch64_cortex-a53.tar.gz"' | cut -d '"' -f 4) 
           curl -LO $(curl -s https://api.github.com/repos/sbwml/luci-app-openlist2/releases/latest | grep -oP '"browser_download_url":\s*".*openwrt-24.10-x86_64.tar.gz"' | cut -d '"' -f 4)
+          curl -LO $(curl -s https://api.github.com/repos/sbwml/luci-app-openlist2/releases/latest | grep -oP '"browser_download_url":\s*".*openwrt-24.10-arm_cortex-a7_neon-vfpv4.tar.gz"' | cut -d '"' -f 4)
           # 解压并分别重命名 packages_ci 目录
           tar -xvzf *aarch64_cortex-a53.tar.gz
           mv packages_ci openlist2_aarch64_cortex-a53
           tar -xvzf *x86_64.tar.gz
           mv packages_ci openlist2_x86_64
+          tar -xvzf *arm_cortex-a7_neon-vfpv4.tar.gz
+          mv packages_ci openlist2_arm_cortex-a7_neon-vfpv4
 
-      - name: Organize files for aarch64_cortex-a53&x86_64
+      - name: Organize files for aarch64_cortex-a53&x86_64&arm
         run: |
           # 保存当前路径并进入目标目录
           pushd "openlist2_x86_64" >/dev/null || exit 1
@@ -72,6 +77,21 @@ jobs:
           echo "已重命名: $file -> $new_file"
           done
           popd >/dev/null
+          pushd "openlist2_arm_cortex-a7_neon-vfpv4" >/dev/null || exit 1
+          for file in *~*.ipk; do
+          [ -e "$file" ] || continue
+          # 构造新文件名，去除 ~ 字符
+          new_file="$(echo "$file" | tr -d '~')"
+          # 如果目标文件名已存在，则提示并跳过
+          if [ -e "$new_file" ]; then
+          echo "目标文件已存在，跳过: $new_file"
+          continue
+          fi
+          # 重命名文件
+          mv "$file" "$new_file"
+          echo "已重命名: $file -> $new_file"
+          done
+          popd >/dev/null
           
       - name: Create install.sh scripts
         run: |
@@ -86,16 +106,19 @@ jobs:
           EOF
           chmod +x openlist2_x86_64/install.sh
           cp openlist2_x86_64/install.sh openlist2_aarch64_cortex-a53/install.sh
+          cp openlist2_x86_64/install.sh openlist2_arm_cortex-a7_neon-vfpv4/install.sh
           
       - name: Move openlist2 directories to makeself
         run: |
           mv openlist2_x86_64 makeself/
           mv openlist2_aarch64_cortex-a53 makeself/
+          mv openlist2_arm_cortex-a7_neon-vfpv4 makeself/
       - name: Create self-extracting packages
         run: |
           cd makeself
           ./makeself.sh openlist2_x86_64/ openlist2_${{ env.LATEST_TAG }}_x86_64.run "by github action" ./install.sh
           ./makeself.sh openlist2_aarch64_cortex-a53/ openlist2_${{ env.LATEST_TAG }}_aarch64_cortex-a53.run "by github action" ./install.sh
+          ./makeself.sh openlist2_arm_cortex-a7_neon-vfpv4/ openlist2_${{ env.LATEST_TAG }}_arm_cortex-a7_neon-vfpv4.run "by github action" ./install.sh
           
       - name: Check file sizes
         run: |

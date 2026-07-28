@@ -14,7 +14,9 @@ on:
         package_version:
           description: '这里是包版本'
           required: false
-          default: 'packages-24.10'  
+          default: 'packages-24.10'
+  schedule:
+    - cron: '0 4 * * *'
 
 jobs:
   build:
@@ -86,7 +88,7 @@ jobs:
           cat <<EOF > AdGuardHome_x86_64/install.sh
           #!/bin/sh
           opkg update
-          if [ $? -ne 0 ]; then
+          if [ \$? -ne 0 ]; then
               echo "update failed。"
               exit 1
           fi

@@ -9,6 +9,8 @@ name: Make Argon Theme run files
 
 on:
   workflow_dispatch:
+  schedule:
+    - cron: '0 3 * * *'
 
 jobs:
   make-run:
@@ -30,7 +32,8 @@ jobs:
         run: |
           cp shell/install.sh x86_64/install.sh
           cp shell/install.sh aarch64_generic/install.sh
-          chmod +x x86_64/install.sh aarch64_generic/install.sh
+          cp shell/install.sh arm_cortex-a7_neon-vfpv4/install.sh
+          chmod +x x86_64/install.sh aarch64_generic/install.sh arm_cortex-a7_neon-vfpv4/install.sh
 
       - name: 🔍 提取版本号并打包
         id: pack
@@ -49,7 +52,7 @@ jobs:
           echo "version=$VERSION" >> $GITHUB_OUTPUT
 
           # 打包两个平台
-          for PLATFORM in x86_64 aarch64_generic; do
+          for PLATFORM in x86_64 aarch64_generic arm_cortex-a7_neon-vfpv4; do
             makeself "$PLATFORM" "output/luci-theme-argon-${VERSION}_${PLATFORM}.run" \
               "argon ${PLATFORM} Installer v${VERSION}" ./install.sh
           done

@@ -13,7 +13,9 @@ on:
       package_version:
         description: '这里是包版本'
         required: false
-        default: 'packages-24.10'  
+        default: 'packages-24.10'
+  schedule:
+    - cron: '0 3 * * *'
 
 jobs:
   build:
@@ -23,9 +25,9 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v3
 
-      - name: Create directories for x86_64 and a53 and set PACKAGE_VERSION
+      - name: Create directories for x86_64 and a53 and arm and set PACKAGE_VERSION
         run: |
-          mkdir -p x86_64/depends a53/depends
+          mkdir -p x86_64/depends a53/depends arm/depends
           package_version="${{ github.event.inputs.package_version }}"
           if [ -z "$package_version" ]; then
             package_version="packages-24.10"
@@ -33,6 +35,7 @@ jobs:
           echo "PACKAGE_VERSION=$package_version" >> $GITHUB_ENV
           wget -O x86_64/depends/libopenssl3.ipk https://github.com/wkccd/build/releases/download/pw1/libopenssl3_3.0.16-1_x86_64.ipk
           wget -O a53/depends/libopenssl3.ipk https://github.com/wkccd/build/releases/download/pw1/libopenssl3_3.0.16-1_aarch64_cortex-a53.ipk
+
       - name: Download ipk files for x86_64 and a53
         run: |
           echo "Get PACKAGE_VERSION=$PACKAGE_VERSION"
@@ -94,6 +97,41 @@ jobs:
                       FILE_URL="${BASE_URL_A53}${FILE}"
                       echo "Found file: $FILE_URL"
                       curl -L --fail "$FILE_URL" -o "a53/depends/$(basename $FILE_URL)" -#
+                  fi
+              done
+          done
+
+      - name: Download ipk files for arm_cortex-a7_neon-vfpv4
+        run: |
+          echo "Get PACKAGE_VERSION=$PACKAGE_VERSION for arm"
+
+          FILE_PREFIXES=("shadowsocks-libev-ss-server" "dns2tcp" "lua-neturl" "chinadns-ng" "dns2socks" "hysteria" "ipt2socks" "microsocks" "mosdns" "naiveproxy" "redsocks2" "shadowsocksr-libev" "shadowsocks-rust" "shadow-tls" "simple-obfs-client" "tcping" "trojan" "tuic-client" "v2ray-plugin" "xray-core" "luci-app-ssr-plus")
+          EXCLUDE_PREFIXES=("luci-app-chinadns-ng" "luci-app-microsocks" "luci-app-mosdns" "luci-app-naiveproxy" "luci-app-redsocks2" "luci-app-shadowsocks")
+
+          BASE_URL_ARM="https://dl.openwrt.ai/$PACKAGE_VERSION/arm_cortex-a7_neon-vfpv4/kiddin9/"
+          echo "Fetching arm directory page from $BASE_URL_ARM"
+          wget -qO- "$BASE_URL_ARM" | \
+          while IFS= read -r LINE; do
+              for PREFIX in "${FILE_PREFIXES[@]}"; do
+                  if [[ "$LINE" == *"$PREFIX"* ]]; then
+                      FILE=$(echo "$LINE" | grep -oP 'href="\K[^"]*')
+                      if [[ -z "$FILE" ]]; then
+                          continue
+                      fi
+                      exclude_file=false
+                      for exclude_prefix in "${EXCLUDE_PREFIXES[@]}"; do
+                          if [[ "$FILE" == $exclude_prefix* ]]; then
+                              exclude_file=true
+                              break
+                          fi
+                      done
+                      if $exclude_file; then
+                          echo "Skip file: $FILE"
+                          continue
+                      fi
+                      FILE_URL="${BASE_URL_ARM}${FILE}"
+                      echo "Found file: $FILE_URL"
+                      curl -L --fail "$FILE_URL" -o "arm/depends/$(basename $FILE_URL)" -#
                   fi
               done
           done
@@ -167,6 +205,37 @@ jobs:
                     fi
               done
           done
+          # ARM base and packages
+          BASE_URL_ARM_BASE="https://dl.openwrt.ai/$PACKAGE_VERSION/arm_cortex-a7_neon-vfpv4/base/"
+          wget -qO- "$BASE_URL_ARM_BASE" | \
+          while IFS= read -r LINE; do
+              for PREFIX in "${FILE_PREFIXES[@]}"; do
+                  if [[ "$LINE" == *"$PREFIX"* ]]; then
+                      FILE=$(echo "$LINE" | grep -oP 'href="\K[^"]*')
+                      if [[ -z "$FILE" ]]; then
+                          continue
+                      fi
+                      FILE_URL="${BASE_URL_ARM_BASE}${FILE}"
+                      echo "Found file: $FILE_URL"
+                      curl -L --fail "$FILE_URL" -o "arm/depends/$(basename $FILE_URL)" -#
+                  fi
+              done
+          done
+          BASE_URL_ARM_PKG="https://dl.openwrt.ai/$PACKAGE_VERSION/arm_cortex-a7_neon-vfpv4/packages/"
+          wget -qO- "$BASE_URL_ARM_PKG" | \
+          while IFS= read -r LINE; do
+              for PREFIX in "${FILE_PREFIXES[@]}"; do
+                  if [[ "$LINE" == *"$PREFIX"* ]]; then
+                      FILE=$(echo "$LINE" | grep -oP 'href="\K[^"]*')
+                      if [[ -z "$FILE" ]]; then
+                          continue
+                      fi
+                      FILE_URL="${BASE_URL_ARM_PKG}${FILE}"
+                      echo "Found file: $FILE_URL"
+                      curl -L --fail "$FILE_URL" -o "arm/depends/$(basename $FILE_URL)" -#
+                  fi
+              done
+          done
 
       - name: List depends ipks
         run: |
@@ -176,12 +245,18 @@ jobs:
           echo "List a53 depends ipk files"
           rm a53/depends/luci-app-trojan-server*
           ls -lh a53/depends/
+          echo "List arm depends ipk files"
+          rm arm/depends/luci-app-trojan-server* 2>/dev/null || true
+          ls -lh arm/depends/
           mv x86_64/depends/luci-app-ssr-plus*.ipk x86_64/
           mv a53/depends/luci-app-ssr-plus*.ipk a53/
+          mv arm/depends/luci-app-ssr-plus*.ipk arm/
           echo "查看a53目录"
           ls a53/
           echo "查看x86_64目录"
           ls x86_64/
+          echo "查看arm目录"
+          ls arm/
 
       - name: Parse version from filename
         id: setver
@@ -203,6 +278,7 @@ jobs:
             echo -e "#!/bin/sh\n\nopkg update\nif [ \$? -ne 0 ]; then\n    echo \"update failed\"\n    exit 1\nfi\nopkg install depends/*.ipk --force-depends\nopkg install *.ipk --force-depends" > x86_64/install.sh
             chmod +x x86_64/install.sh
             cp x86_64/install.sh a53/
+            cp x86_64/install.sh arm/
 
       - name: Clone makeself repo
         run: |
@@ -212,6 +288,7 @@ jobs:
         run: |
             mv -f x86_64/ makeself/
             mv -f a53/ makeself/
+            mv -f arm/ makeself/
             echo "移动后再查看makeself/的文件"
             ls -lah makeself/
 
@@ -221,6 +298,7 @@ jobs:
             cd makeself
             ./makeself.sh x86_64/ ssrp_x86_64-${ssrp_version}.run "by github action" ./install.sh
             ./makeself.sh a53/ ssrp_aarch64_cortex-a53-${ssrp_version}.run "by github action" ./install.sh
+            ./makeself.sh arm/ ssrp_arm_cortex-a7_neon-vfpv4-${ssrp_version}.run "by github action" ./install.sh
                 
       
       - name: Set tag name

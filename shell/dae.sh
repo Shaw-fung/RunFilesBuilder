@@ -2,9 +2,10 @@
 set -e
 
 declare -A PLATFORMS=(
-  ["x86_64"]="https://mirrors.pku.edu.cn/immortalwrt/releases/24.10.4/packages/x86_64"
-  ["aarch64_generic"]="https://mirrors.pku.edu.cn/immortalwrt/releases/24.10.4/packages/aarch64_generic"
-  ["aarch64_cortex-a53"]="https://mirrors.pku.edu.cn/immortalwrt/releases/24.10.4/packages/aarch64_cortex-a53"
+  ["x86_64"]="https://mirrors.pku.edu.cn/immortalwrt/releases/24.10.6/packages/x86_64"
+  ["aarch64_generic"]="https://mirrors.pku.edu.cn/immortalwrt/releases/24.10.6/packages/aarch64_generic"
+  ["aarch64_cortex-a53"]="https://mirrors.pku.edu.cn/immortalwrt/releases/24.10.6/packages/aarch64_cortex-a53"
+  ["arm_cortex-a7_neon-vfpv4"]="https://mirrors.pku.edu.cn/immortalwrt/releases/24.10.6/packages/arm_cortex-a7_neon-vfpv4"
 )
 
 # 各类包对应的目录
@@ -67,4 +68,4 @@ for platform in "${!PLATFORMS[@]}"; do
   done
 done
 
-echo "✅ 下载完成，文件已分别存入 x86_64、aarch64_generic、aarch64_cortex-a53 目录中。"
+echo "✅ 下载完成，文件已分别存入 x86_64、aarch64_generic、aarch64_cortex-a53、arm_cortex-a7_neon-vfpv4 目录中。"

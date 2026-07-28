@@ -10,6 +10,8 @@ name: Make OpenClash run files
 
 on:
   workflow_dispatch:
+  schedule:
+    - cron: '0 3 * * *'
 
 jobs:
   build:
@@ -17,7 +19,7 @@ jobs:
 
     steps:
       - name: Create OpenClash & openclash directory for git & ipk
-        run: mkdir -p OpenClash openclash-x86 openclash-a53
+        run: mkdir -p OpenClash openclash-x86 openclash-a53 openclash-arm
         
       - name: Checkout package branch to OpenClash directory
         uses: actions/checkout@v4
@@ -30,6 +32,7 @@ jobs:
         run: |
           cp OpenClash/master/*.ipk openclash-x86
           cp OpenClash/master/*.ipk openclash-a53
+          cp OpenClash/master/*.ipk openclash-arm
 
       - name: Get version info
         id: extract_version
@@ -54,10 +57,13 @@ jobs:
         run: |
           tar -xzvf Meta/master/meta/clash-linux-amd64-v1.tar.gz -C openclash-x86
           tar -xzvf Meta/master/meta/clash-linux-arm64.tar.gz -C openclash-a53
+          tar -xzvf Meta/master/meta/clash-linux-arm.tar.gz -C openclash-arm
           mv openclash-x86/clash openclash-x86/clash_meta
           mv openclash-a53/clash openclash-a53/clash_meta
+          mv openclash-arm/clash openclash-arm/clash_meta
           ls openclash-x86
           ls openclash-a53
+          ls openclash-arm
 
       - name: Create install.sh script save to openclash directory
         run: |
@@ -81,6 +87,8 @@ jobs:
           chmod +x openclash-x86/install.sh
           cp openclash-x86/install.sh openclash-a53/install.sh
           chmod +x openclash-a53/install.sh
+          cp openclash-x86/install.sh openclash-arm/install.sh
+          chmod +x openclash-arm/install.sh
 
       - name: Clone makeself repository for self-extracting installer
         run: | 
@@ -91,9 +99,11 @@ jobs:
         run: |
           mv openclash-x86 makeself/
           mv openclash-a53 makeself/
+          mv openclash-arm makeself/
           cd makeself
           ./makeself.sh openclash-x86/ openclash-x86-64-${{ env.version }}.run "by github action" ./install.sh
           ./makeself.sh openclash-a53/ openclash-aarch64_cortex-a53-${{ env.version }}.run "by github action" ./install.sh
+          ./makeself.sh openclash-arm/ openclash-arm_cortex-a7_neon-vfpv4-${{ env.version }}.run "by github action" ./install.sh
 
       - name: Generate new tag & release
         uses: softprops/action-gh-release@master
