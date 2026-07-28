@@ -49,31 +49,46 @@ jobs:
 
       - name: Download 24.10 luci-app-adguardhome IPK files
         run: |
+          # 架构映射: OpenWrt arch -> 二进制目录短名
+          declare -A ARCH_MAP=(
+            [arm_cortex-a7_neon-vfpv4]=aarch32
+            [aarch64_cortex-a53]=aarch64
+            [x86_64]=x86_64
+          )
           for ARCH in arm_cortex-a7_neon-vfpv4 aarch64_cortex-a53 x86_64; do
+            SHORT="${ARCH_MAP[$ARCH]}"
             BASE_URL="https://dl.openwrt.ai/packages-24.10/${ARCH}/kiddin9/"
             page_content=$(curl -s "$BASE_URL")
             match=$(echo "$page_content" | grep -oP 'href="\K[^"]+\.ipk' | grep "^luci-app-adguardhome_" | head -n1)
             if [ -n "$match" ]; then
               echo "⬇️ $ARCH (24.10): $match"
-              curl -sL -o "AdGuardHome_${ARCH}/${match}" "${BASE_URL}${match}"
+              # 处理 ~ 字符
+              safe_name=$(echo "$match" | tr '~' '-')
+              curl -sL -o "AdGuardHome_${SHORT}/${safe_name}" "${BASE_URL}${match}"
             else
               # 回退到旧版本固定 ipk
               echo "⚠️ $ARCH: 未找到最新版,使用固定版本"
-              curl -L -o "AdGuardHome_${ARCH}/luci-app-adguardhome-all.ipk" \
+              curl -sL -o "AdGuardHome_${SHORT}/luci-app-adguardhome-all.ipk" \
                 "https://github.com/wukongdaily/RunFilesBuilder/releases/download/AdGuardHome_v0.107.55/luci-app-adguardhome-all.ipk"
             fi
           done
 
       - name: Download 25.12 luci-app-adguardhome IPK files (apk-installable)
         run: |
-          # 25.12 的包从 packages-25.12 下载, ipk 格式,apk add 可安装
+          # 架构映射: OpenWrt arch -> 二进制目录短名
+          declare -A ARCH_MAP=(
+            [arm_cortex-a7_neon-vfpv4]=aarch32
+            [aarch64_cortex-a53]=aarch64
+            [x86_64]=x86_64
+          )
           for ARCH in arm_cortex-a7_neon-vfpv4 aarch64_cortex-a53 x86_64; do
-            mkdir -p "AdGuardHome_apk_${ARCH}"
+            SHORT="${ARCH_MAP[$ARCH]}"
+            mkdir -p "AdGuardHome_apk_${SHORT}"
             # 复制二进制
-            cp -r "AdGuardHome_${ARCH}/AdGuardHome" "AdGuardHome_apk_${ARCH}/" 2>/dev/null || true
+            cp -r "AdGuardHome_${SHORT}/AdGuardHome" "AdGuardHome_apk_${SHORT}/" 2>/dev/null || true
             # 复制所有非 ipk 内容
-            for f in "AdGuardHome_${ARCH}"/*; do
-              [ -f "$f" ] && [ "${f##*.}" != "ipk" ] && cp "$f" "AdGuardHome_apk_${ARCH}/"
+            for f in "AdGuardHome_${SHORT}"/*; do
+              [ -f "$f" ] && [ "${f##*.}" != "ipk" ] && cp "$f" "AdGuardHome_apk_${SHORT}/"
             done
             # 下载 25.12 版本的 ipk
             BASE_URL="https://dl.openwrt.ai/packages-25.12/${ARCH}/kiddin9/"
@@ -81,10 +96,11 @@ jobs:
             match=$(echo "$page_content" | grep -oP 'href="\K[^"]+\.ipk' | grep "^luci-app-adguardhome_" | head -n1)
             if [ -n "$match" ]; then
               echo "⬇️ $ARCH (25.12): $match"
-              curl -sL -o "AdGuardHome_apk_${ARCH}/${match}" "${BASE_URL}${match}"
+              safe_name=$(echo "$match" | tr '~' '-')
+              curl -sL -o "AdGuardHome_apk_${SHORT}/${safe_name}" "${BASE_URL}${match}"
             else
               echo "⚠️ $ARCH: 未找到 25.12 版本,使用固定版本"
-              curl -L -o "AdGuardHome_apk_${ARCH}/luci-app-adguardhome-all.ipk" \
+              curl -sL -o "AdGuardHome_apk_${SHORT}/luci-app-adguardhome-all.ipk" \
                 "https://github.com/wukongdaily/RunFilesBuilder/releases/download/AdGuardHome_v0.107.55/luci-app-adguardhome-all.ipk"
             fi
           done
