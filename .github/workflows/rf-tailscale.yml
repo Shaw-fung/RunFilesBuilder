@@ -17,9 +17,20 @@ jobs:
         run: |
           for ARCH in x86_64 aarch64_cortex-a53 arm_cortex-a7_neon-vfpv4; do
             mkdir -p "$ARCH"
+            BASE_URL="https://dl.openwrt.ai/packages-24.10/${ARCH}/packages/"
+            page_content=$(curl -s "$BASE_URL")
+            for prefix in tailscale; do
+              match=$(echo "$page_content" | grep -oP 'href="\K[^"]+\.ipk' | grep "^${prefix}_" | head -n1)
+              if [ -n "$match" ]; then
+                echo "⬇️ $ARCH: $match"
+                curl -sL -o "${ARCH}/${match}" "${BASE_URL}${match}"
+              else
+                echo "⚠️ $ARCH: not found: $prefix"
+              fi
+            done
             BASE_URL="https://dl.openwrt.ai/packages-24.10/${ARCH}/kiddin9/"
             page_content=$(curl -s "$BASE_URL")
-            for prefix in tailscale luci-app-tailscale-community luci-i18n-tailscale-community-zh-cn; do
+            for prefix in luci-app-tailscale-community luci-i18n-tailscale-community-zh-cn; do
               match=$(echo "$page_content" | grep -oP 'href="\K[^"]+\.ipk' | grep "^${prefix}_" | head -n1)
               if [ -n "$match" ]; then
                 echo "⬇️ $ARCH: $match"

@@ -10,25 +10,33 @@ jobs:
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v3
-      - name: Install makeself
-        run: sudo apt-get update && sudo apt-get install -y makeself curl
-      - name: Download ipks for all architectures
+
+      - name: Fetch latest release info
+        id: fetch_latest_release
         run: |
-          # 对 x86_64, aarch64_cortex-a53, arm_cortex-a7_neon-vfpv4 分别下载
+          latest_tag=$(curl -s https://api.github.com/repos/kenzok8/openwrt-clashoo/releases/latest | jq -r '.tag_name')
+          echo "LATEST_TAG=$latest_tag" >> $GITHUB_ENV
+
+      - name: Install makeself
+        run: sudo apt-get update && sudo apt-get install -y makeself curl jq
+
+      - name: Clone makeself repository
+        run: git clone https://github.com/megastep/makeself.git
+
+      - name: Download clashoo ipks for all architectures
+        run: |
+          RELEASE_INFO=$(curl -s https://api.github.com/repos/kenzok8/openwrt-clashoo/releases/latest)
           for ARCH in x86_64 aarch64_cortex-a53 arm_cortex-a7_neon-vfpv4; do
             mkdir -p "$ARCH"
-            BASE_URL="https://dl.openwrt.ai/packages-24.10/${ARCH}/kiddin9/"
-            page_content=$(curl -s "$BASE_URL")
-            for prefix in clashoo luci-app-clashoo luci-i18n-clashoo-zh-cn; do
-              match=$(echo "$page_content" | grep -oP 'href="\K[^"]+\.ipk' | grep "^${prefix}_" | head -n1)
-              if [ -n "$match" ]; then
-                echo "⬇️ $ARCH: $match"
-                curl -sL -o "${ARCH}/${match}" "${BASE_URL}${match}"
-              else
-                echo "⚠️ $ARCH: not found: $prefix"
+            echo "$RELEASE_INFO" | jq -r '.assets[] | select(.name | test("\\.ipk$")) | .browser_download_url' | while read url; do
+              name=$(basename "$url")
+              if echo "$name" | grep -q "$ARCH"; then
+                echo "⬇️ $ARCH: $name"
+                curl -sL -o "${ARCH}/${name}" "$url"
               fi
             done
           done
+
       - name: Create install.sh and pack
         run: |
           for ARCH in x86_64 aarch64_cortex-a53 arm_cortex-a7_neon-vfpv4; do
@@ -43,14 +51,13 @@ jobs:
           EOF
             chmod +x "$ARCH/install.sh"
           done
-          git clone https://github.com/megastep/makeself.git
           mkdir -p output
-          VERSION=$(date -u -d '+8 hour' +'%Y-%m-%d')
           cd makeself
           for ARCH in x86_64 aarch64_cortex-a53 arm_cortex-a7_neon-vfpv4; do
             mv ../$ARCH .
-            ./makeself.sh $ARCH/ ../output/clashoo_${VERSION}_${ARCH}.run "Clashoo ${ARCH} v${VERSION}" ./install.sh
+            ./makeself.sh $ARCH/ ../output/clashoo_${{ env.LATEST_TAG }}_${ARCH}.run "Clashoo ${ARCH} v${{ env.LATEST_TAG }}" ./install.sh
           done
+
       - name: Upload to GitHub Release
         uses: softprops/action-gh-release@v2.1.0
         with:

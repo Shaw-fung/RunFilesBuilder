@@ -14,12 +14,11 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y makeself curl
       - name: Download ipks for all architectures
         run: |
-          # 对 x86_64, aarch64_cortex-a53, arm_cortex-a7_neon-vfpv4 分别下载
           for ARCH in x86_64 aarch64_cortex-a53 arm_cortex-a7_neon-vfpv4; do
             mkdir -p "$ARCH"
             BASE_URL="https://dl.openwrt.ai/packages-24.10/${ARCH}/kiddin9/"
             page_content=$(curl -s "$BASE_URL")
-            for prefix in luci-app-turboacc kmod-tcp-bbr kmod-tcp-hybla kmod-tcp-scalable kmod-fast-classifier kmod-tcp-cubic kmod-nft-tproxy kmod-iptunnel kmod-tun kmod-inet-diag kmod-nft-socket kmod-nf-nathelper kmod-nf-nathelper-extra; do
+            for prefix in luci-app-turboacc; do
               match=$(echo "$page_content" | grep -oP 'href="\K[^"]+\.ipk' | grep "^${prefix}_" | head -n1)
               if [ -n "$match" ]; then
                 echo "⬇️ $ARCH: $match"
