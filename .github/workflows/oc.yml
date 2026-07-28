@@ -58,7 +58,7 @@ jobs:
         run: |
           tar -xzvf Meta/master/meta/clash-linux-amd64-v1.tar.gz -C openclash-x86
           tar -xzvf Meta/master/meta/clash-linux-arm64.tar.gz -C openclash-a53
-          tar -xzvf Meta/master/meta/clash-linux-arm.tar.gz -C openclash-arm
+          tar -xzvf Meta/master/meta/clash-linux-armv7.tar.gz -C openclash-arm
           mv openclash-x86/clash openclash-x86/clash_meta
           mv openclash-a53/clash openclash-a53/clash_meta
           mv openclash-arm/clash openclash-arm/clash_meta
