@@ -117,13 +117,7 @@ jobs:
           RELEASE_INFO=$(curl -s https://api.github.com/repos/Openwrt-Passwall/openwrt-passwall2/releases/latest)
 
           for ARCH in x86_64 aarch64_cortex-a53 arm_cortex-a7_neon-vfpv4; do
-            URL=$(echo "$RELEASE_INFO" | python3 -c "          import json,sys
-          d=json.load(sys.stdin)
-          arch='$ARCH'
-          for a in d['assets']:
-              if 'apk' in a['name'] and arch in a['name'] and a['name'].endswith('.zip'):
-                  print(a['browser_download_url'])
-                  break")
+            URL=$(echo "$RELEASE_INFO" | jq -r --arg arch "$ARCH" '.assets[] | select(.name | contains("apk") and contains($arch) and endswith(".zip")) | .browser_download_url' | head -1)
             if [ -n "$URL" ]; then
               echo "⬇️ $ARCH (apk zip): $(basename $URL)"
               curl -sL -o "passwall2_apk_${ARCH}.zip" "$URL"
@@ -133,19 +127,9 @@ jobs:
           done
 
           # 下载luci app apk
-          curl -sL -o luci-app-passwall2.apk $(echo "$RELEASE_INFO" | python3 -c "          import json,sys
-          d=json.load(sys.stdin)
-          for a in d['assets']:
-              if 'luci-app-passwall2' in a['name'] and a['name'].endswith('.apk'):
-                  print(a['browser_download_url'])
-                  break")
+          curl -sL -o luci-app-passwall2.apk $(echo "$RELEASE_INFO" | jq -r '.assets[] | select(.name | contains("luci-app-passwall2") and endswith(".apk")) | .browser_download_url' | head -1)
           # 下载luci简体中文语言包apk
-          curl -sL -o luci-i18n-passwall2-zh-cn.apk $(echo "$RELEASE_INFO" | python3 -c "          import json,sys
-          d=json.load(sys.stdin)
-          for a in d['assets']:
-              if 'luci-i18n-passwall2-zh-cn' in a['name'] and a['name'].endswith('.apk'):
-                  print(a['browser_download_url'])
-                  break")
+          curl -sL -o luci-i18n-passwall2-zh-cn.apk $(echo "$RELEASE_INFO" | jq -r '.assets[] | select(.name | contains("luci-i18n-passwall2-zh-cn") and endswith(".apk")) | .browser_download_url' | head -1)
           ls -lh *.apk 2>/dev/null || true
 
       - name: Organize 25.12 apk for all architectures
