@@ -1,0 +1,96 @@
+#=================================================
+# Build RunFiles for misc all-arch plugins
+# (uninstall, aurora theme, rtp2httpd)
+#=================================================
+name: Make misc all-arch plugins run files
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 5 * * *'
+
+jobs:
+  make-run:
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Install makeself
+        run: sudo apt-get update && sudo apt-get install -y makeself curl
+
+      - name: Download misc plugin ipks from dl.openwrt.ai
+        run: |
+          chmod +x shell/dl_openwrt_ai.sh
+          # Download all needed ipks (they are _all.ipk, same for every arch)
+          ./shell/dl_openwrt_ai.sh x86_64 \
+            luci-app-uninstall \
+            luci-theme-aurora \
+            luci-app-aurora-config \
+            luci-i18n-aurora-config-zh-cn \
+            luci-app-rtp2httpd \
+            luci-i18n-rtp2httpd-zh-cn
+
+      - name: Organize and pack uninstall
+        run: |
+          mkdir -p uninstall
+          cp x86_64/luci-app-uninstall*.ipk uninstall/ 2>/dev/null || true
+          cat <<'EOF' > uninstall/install.sh
+          #!/bin/sh
+          opkg update
+          opkg install *.ipk --force-depends
+          EOF
+          chmod +x uninstall/install.sh
+
+      - name: Organize and pack aurora theme
+        run: |
+          mkdir -p aurora-theme
+          cp x86_64/luci-theme-aurora*.ipk aurora-theme/ 2>/dev/null || true
+          cp x86_64/luci-app-aurora-config*.ipk aurora-theme/ 2>/dev/null || true
+          cp x86_64/luci-i18n-aurora-config*.ipk aurora-theme/ 2>/dev/null || true
+          cat <<'EOF' > aurora-theme/install.sh
+          #!/bin/sh
+          opkg update
+          opkg install *.ipk --force-depends
+          EOF
+          chmod +x aurora-theme/install.sh
+
+      - name: Organize and pack rtp2httpd
+        run: |
+          mkdir -p rtp2httpd
+          cp x86_64/luci-app-rtp2httpd*.ipk rtp2httpd/ 2>/dev/null || true
+          cp x86_64/luci-i18n-rtp2httpd*.ipk rtp2httpd/ 2>/dev/null || true
+          cat <<'EOF' > rtp2httpd/install.sh
+          #!/bin/sh
+          opkg update
+          opkg install *.ipk --force-depends
+          EOF
+          chmod +x rtp2httpd/install.sh
+
+      - name: Clone makeself and pack all
+        run: |
+          git clone https://github.com/megastep/makeself.git
+          mkdir -p output
+          VERSION=$(date -u -d '+8 hour' +'%Y-%m-%d')
+          
+          mv uninstall makeself/
+          cd makeself
+          ./makeself.sh uninstall/ ../output/luci-app-uninstall-${VERSION}_all.run "uninstall v${VERSION}" ./install.sh
+          
+          mv ../aurora-theme .
+          ./makeself.sh aurora-theme/ ../output/luci-theme-aurora-${VERSION}_all.run "aurora theme v${VERSION}" ./install.sh
+          
+          mv ../rtp2httpd .
+          ./makeself.sh rtp2httpd/ ../output/luci-app-rtp2httpd-${VERSION}_all.run "rtp2httpd v${VERSION}" ./install.sh
+
+      - name: Upload to GitHub Release
+        uses: softprops/action-gh-release@v2.1.0
+        with:
+          tag_name: "misc-all-latest"
+          name: "misc all-arch plugins"
+          body: "Plugins: luci-app-uninstall, luci-theme-aurora, luci-app-rtp2httpd"
+          files: output/*.run
+          token: ${{ secrets.GITHUB_TOKEN }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

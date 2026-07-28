@@ -1,0 +1,63 @@
+name: Make TurboACC run files
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 6 * * *'
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v3
+      - name: Install makeself
+        run: sudo apt-get update && sudo apt-get install -y makeself curl
+      - name: Download ipks for all architectures
+        run: |
+          # 对 x86_64, aarch64_cortex-a53, arm_cortex-a7_neon-vfpv4 分别下载
+          for ARCH in x86_64 aarch64_cortex-a53 arm_cortex-a7_neon-vfpv4; do
+            mkdir -p "$ARCH"
+            BASE_URL="https://dl.openwrt.ai/packages-24.10/${ARCH}/kiddin9/"
+            page_content=$(curl -s "$BASE_URL")
+            for prefix in luci-app-turboacc kmod-tcp-bbr kmod-tcp-hybla kmod-tcp-scalable kmod-fast-classifier kmod-tcp-cubic kmod-nft-tproxy kmod-iptunnel kmod-tun kmod-inet-diag kmod-nft-socket kmod-nf-nathelper kmod-nf-nathelper-extra; do
+              match=$(echo "$page_content" | grep -oP 'href="\K[^"]+\.ipk' | grep "^${prefix}_" | head -n1)
+              if [ -n "$match" ]; then
+                echo "⬇️ $ARCH: $match"
+                curl -sL -o "${ARCH}/${match}" "${BASE_URL}${match}"
+              else
+                echo "⚠️ $ARCH: not found: $prefix"
+              fi
+            done
+          done
+      - name: Create install.sh and pack
+        run: |
+          for ARCH in x86_64 aarch64_cortex-a53 arm_cortex-a7_neon-vfpv4; do
+            cat <<EOF > "$ARCH/install.sh"
+          #!/bin/sh
+          opkg update
+          if [ \$? -ne 0 ]; then
+              echo "update failed"
+              exit 1
+          fi
+          opkg install *.ipk --force-depends
+          EOF
+            chmod +x "$ARCH/install.sh"
+          done
+          git clone https://github.com/megastep/makeself.git
+          mkdir -p output
+          VERSION=$(date -u -d '+8 hour' +'%Y-%m-%d')
+          cd makeself
+          for ARCH in x86_64 aarch64_cortex-a53 arm_cortex-a7_neon-vfpv4; do
+            mv ../$ARCH .
+            ./makeself.sh $ARCH/ ../output/turboacc_${VERSION}_${ARCH}.run "TurboACC ${ARCH} v${VERSION}" ./install.sh
+          done
+      - name: Upload to GitHub Release
+        uses: softprops/action-gh-release@v2.1.0
+        with:
+          tag_name: "TurboACC"
+          name: "TurboACC-latest"
+          body: "TurboACC network accelerator with BBR, shortcut, etc."
+          files: output/*.run
+          token: ${{ secrets.GITHUB_TOKEN }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

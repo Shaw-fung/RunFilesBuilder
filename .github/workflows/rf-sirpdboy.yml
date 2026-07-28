@@ -1,0 +1,76 @@
+#=================================================
+# Build RunFiles for sirpdboy plugins (all-arch)
+#=================================================
+name: Make sirpdboy plugins run files
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 5 * * *'
+
+jobs:
+  make-run:
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Install makeself
+        run: sudo apt-get update && sudo apt-get install -y makeself curl
+
+      - name: Download sirpdboy plugin ipks from dl.openwrt.ai
+        run: |
+          chmod +x shell/dl_openwrt_ai.sh
+          ./shell/dl_openwrt_ai.sh x86_64 \
+            luci-app-advancedplus \
+            luci-i18n-advancedplus-zh-cn \
+            luci-app-netwizard \
+            luci-i18n-netwizard-zh-cn \
+            luci-app-partexp \
+            luci-i18n-partexp-zh-cn \
+            luci-theme-kucat \
+            luci-app-taskplan \
+            luci-i18n-taskplan-zh-cn \
+            luci-app-watchdog \
+            luci-i18n-watchdog-zh-cn
+
+      - name: Create sirpdboy directory and organize ipks
+        run: |
+          mkdir -p sirpdboy
+          cp x86_64/*.ipk sirpdboy/ 2>/dev/null || true
+          ls -lh sirpdboy/
+
+      - name: Create install.sh
+        run: |
+          cat <<'EOF' > sirpdboy/install.sh
+          #!/bin/sh
+          opkg update
+          if [ $? -ne 0 ]; then
+              echo "update failed"
+              exit 1
+          fi
+          opkg install *.ipk --force-depends
+          EOF
+          chmod +x sirpdboy/install.sh
+
+      - name: Clone makeself and pack
+        run: |
+          git clone https://github.com/megastep/makeself.git
+          mv sirpdboy makeself/
+          cd makeself
+          VERSION=$(date -u -d '+8 hour' +'%Y-%m-%d')
+          ./makeself.sh sirpdboy/ sirpdboy-${VERSION}_all.run "sirpdboy plugins v${VERSION}" ./install.sh
+          mkdir -p ../output
+          mv *.run ../output/
+
+      - name: Upload to GitHub Release
+        uses: softprops/action-gh-release@v2.1.0
+        with:
+          tag_name: "sirpdboy-latest"
+          name: "sirpdboy plugins (all-arch)"
+          body: "sirpdboy plugins: advancedplus, netwizard, partexp, kucat, taskplan, watchdog"
+          files: output/*.run
+          token: ${{ secrets.GITHUB_TOKEN }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -1,0 +1,81 @@
+name: Make QuickFile run files
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 6 * * *'
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v3
+      - name: Install makeself
+        run: sudo apt-get update && sudo apt-get install -y makeself curl jq
+
+      - name: Download quickfile from GitHub releases
+        run: |
+          mkdir -p x86_64 aarch64_cortex-a53 arm_cortex-a7_neon-vfpv4
+          
+          # 获取最新 release 信息
+          RELEASE_INFO=$(curl -s https://api.github.com/repos/sbwml/luci-app-quickfile/releases/latest)
+          
+          # 下载所有 tar.gz 资产并解压
+          for ARCH in x86_64 aarch64_cortex-a53 arm_cortex-a7_neon-vfpv4; do
+            # 尝试匹配架构的 tar.gz
+            URL=$(echo "$RELEASE_INFO" | grep -oP '"browser_download_url":\s*"\K[^"]*'"$ARCH"'[^"]*\.tar\.gz' | head -n1)
+            if [ -n "$URL" ]; then
+              echo "⬇️ 下载 quickfile $ARCH: $URL"
+              curl -sL -o "/tmp/quickfile_${ARCH}.tar.gz" "$URL"
+              mkdir -p "/tmp/quickfile_${ARCH}"
+              tar -xzf "/tmp/quickfile_${ARCH}.tar.gz" -C "/tmp/quickfile_${ARCH}"
+              # 查找并复制 ipk 文件
+              find "/tmp/quickfile_${ARCH}" -name "*.ipk" -exec cp {} "${ARCH}/" \;
+            else
+              echo "⚠️ quickfile $ARCH: 未找到 tar.gz, 尝试从 dl.openwrt.ai 下载"
+              BASE_URL="https://dl.openwrt.ai/packages-24.10/${ARCH}/kiddin9/"
+              page=$(curl -s "$BASE_URL")
+              for prefix in luci-app-quickfile quickfile bash; do
+                match=$(echo "$page" | grep -oP 'href="\K[^"]+\.ipk' | grep "^${prefix}_" | head -n1)
+                if [ -n "$match" ]; then
+                  curl -sL -o "${ARCH}/${match}" "${BASE_URL}${match}"
+                fi
+              done
+            fi
+          done
+
+      - name: Create install.sh and pack
+        run: |
+          for ARCH in x86_64 aarch64_cortex-a53 arm_cortex-a7_neon-vfpv4; do
+            cat <<EOF > "$ARCH/install.sh"
+          #!/bin/sh
+          opkg update
+          if [ \$? -ne 0 ]; then
+              echo "update failed"
+              exit 1
+          fi
+          opkg install *.ipk --force-depends
+          EOF
+            chmod +x "$ARCH/install.sh"
+          done
+          git clone https://github.com/megastep/makeself.git
+          mkdir -p output
+          VERSION=$(date -u -d '+8 hour' +'%Y-%m-%d')
+          cd makeself
+          for ARCH in x86_64 aarch64_cortex-a53 arm_cortex-a7_neon-vfpv4; do
+            if [ "$(ls -A ../$ARCH/*.ipk 2>/dev/null)" ]; then
+              mv ../$ARCH .
+              ./makeself.sh $ARCH/ ../output/quickfile_${VERSION}_${ARCH}.run "QuickFile ${ARCH} v${VERSION}" ./install.sh
+            fi
+          done
+
+      - name: Upload to GitHub Release
+        uses: softprops/action-gh-release@v2.1.0
+        with:
+          tag_name: "QuickFile"
+          name: "QuickFile-latest"
+          body: "QuickFile - 轻量级 OpenWrt/LuCI 网页文件管理器"
+          files: output/*.run
+          token: ${{ secrets.GITHUB_TOKEN }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -1,0 +1,86 @@
+name: Make Tailscale run files
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 6 * * *'
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v3
+      - name: Install makeself
+        run: sudo apt-get update && sudo apt-get install -y makeself curl jq
+
+      - name: Download tailscale and luci-app-tailscale-community
+        run: |
+          mkdir -p x86_64 aarch64_cortex-a53 arm_cortex-a7_neon-vfpv4
+          
+          # 从 dl.openwrt.ai 下载 tailscale 二进制 (每个架构)
+          for ARCH in x86_64 aarch64_cortex-a53 arm_cortex-a7_neon-vfpv4; do
+            BASE_URL="https://dl.openwrt.ai/packages-24.10/${ARCH}/kiddin9/"
+            page=$(curl -s "$BASE_URL")
+            for prefix in tailscale; do
+              match=$(echo "$page" | grep -oP 'href="\K[^"]+\.ipk' | grep "^${prefix}_" | head -n1)
+              if [ -n "$match" ]; then
+                echo "⬇️ $ARCH: $match"
+                curl -sL -o "${ARCH}/${match}" "${BASE_URL}${match}"
+              fi
+            done
+          done
+          
+          # 从 GitHub 下载 luci-app-tailscale-community (all-arch ipk)
+          LUCI_RELEASE=$(curl -s https://api.github.com/repos/Tokisaki-Galaxy/luci-app-tailscale-community/releases/latest)
+          for pkg in luci-app-tailscale-community luci-i18n-tailscale-community-zh-cn; do
+            URL=$(echo "$LUCI_RELEASE" | grep -oP '"browser_download_url":\s*"\K[^"]*'"$pkg"'[^"]*\.ipk' | head -n1)
+            if [ -n "$URL" ]; then
+              for ARCH in x86_64 aarch64_cortex-a53 arm_cortex-a7_neon-vfpv4; do
+                curl -sL -o "${ARCH}/$(basename $URL)" "$URL"
+              done
+            else
+              echo "⚠️ GitHub 未找到 $pkg, 尝试 dl.openwrt.ai"
+              for ARCH in x86_64 aarch64_cortex-a53 arm_cortex-a7_neon-vfpv4; do
+                BASE_URL="https://dl.openwrt.ai/packages-24.10/${ARCH}/kiddin9/"
+                page=$(curl -s "$BASE_URL")
+                match=$(echo "$page" | grep -oP 'href="\K[^"]+\.ipk' | grep "^${pkg}_" | head -n1)
+                if [ -n "$match" ]; then
+                  curl -sL -o "${ARCH}/${match}" "${BASE_URL}${match}"
+                fi
+              done
+            fi
+          done
+
+      - name: Create install.sh and pack
+        run: |
+          for ARCH in x86_64 aarch64_cortex-a53 arm_cortex-a7_neon-vfpv4; do
+            cat <<EOF > "$ARCH/install.sh"
+          #!/bin/sh
+          opkg update
+          if [ \$? -ne 0 ]; then
+              echo "update failed"
+              exit 1
+          fi
+          opkg install *.ipk --force-depends
+          EOF
+            chmod +x "$ARCH/install.sh"
+          done
+          git clone https://github.com/megastep/makeself.git
+          mkdir -p output
+          VERSION=$(date -u -d '+8 hour' +'%Y-%m-%d')
+          cd makeself
+          for ARCH in x86_64 aarch64_cortex-a53 arm_cortex-a7_neon-vfpv4; do
+            mv ../$ARCH .
+            ./makeself.sh $ARCH/ ../output/tailscale_${VERSION}_${ARCH}.run "Tailscale ${ARCH} v${VERSION}" ./install.sh
+          done
+
+      - name: Upload to GitHub Release
+        uses: softprops/action-gh-release@v2.1.0
+        with:
+          tag_name: "Tailscale"
+          name: "Tailscale-latest"
+          body: "Tailscale VPN + luci-app-tailscale-community"
+          files: output/*.run
+          token: ${{ secrets.GITHUB_TOKEN }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
