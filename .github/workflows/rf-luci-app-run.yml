@@ -1,0 +1,98 @@
+#=================================================
+# Build RunFiles for luci-app-run (wukongdaily)
+# 支持 24.10 (ipk) 和 25.12 (apk) 两种格式
+# 单个 .run 包同时包含 ipk 和 apk，便于被
+# ImmortalWrt-ImageBuilder 的 24.10 和 25.12 构建拉取
+#=================================================
+name: Make luci-app-run run files
+
+on:
+  workflow_dispatch:
+  schedule:
+    # 凌晨 0 点 (北京时间) 执行 = 16:00 UTC 前一天
+    - cron: '0 16 * * *'
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Fetch latest release info from wukongdaily/luci-app-run
+        id: fetch_latest_release
+        run: |
+          latest_tag=$(curl -s https://api.github.com/repos/wukongdaily/luci-app-run/releases/latest | jq -r '.tag_name')
+          echo "LATEST_TAG=$latest_tag" >> $GITHUB_ENV
+          echo "📋 Latest luci-app-run version: $latest_tag"
+
+      - name: Install makeself
+        run: sudo apt-get update && sudo apt-get install -y makeself curl jq
+
+      - name: Clone makeself repository
+        run: git clone https://github.com/megastep/makeself.git
+
+      - name: Download luci-app-run packages (ipk + apk)
+        run: |
+          mkdir -p luci-app-run
+          # 下载最新 release 的全部资产 (同时包含 .ipk 和 .apk)
+          curl -s https://api.github.com/repos/wukongdaily/luci-app-run/releases/latest \
+            | jq -r '.assets[] | "\(.name) \(.browser_download_url)"' \
+            | while read -r name url; do
+                echo "⬇️ Downloading: $name"
+                curl -sL -o "luci-app-run/$name" "$url"
+              done
+          echo "📦 Downloaded files:"
+          ls -lh luci-app-run/
+
+      - name: Create install.sh (兼容 opkg/apk 双包管理器)
+        run: |
+          cat <<'EOF' > luci-app-run/install.sh
+          #!/bin/sh
+          # luci-app-run installer
+          # 自动检测包管理器 (opkg for 24.10, apk for 25.12)
+          if command -v opkg >/dev/null 2>&1; then
+              echo "📦 Using opkg (24.10)"
+              opkg update
+              opkg install *.ipk --force-depends
+          elif command -v apk >/dev/null 2>&1; then
+              echo "📦 Using apk (25.12)"
+              apk add --no-cache --allow-untrusted *.apk || true
+          else
+              echo "❌ No supported package manager found (opkg/apk)"
+              exit 1
+          fi
+          EOF
+          chmod +x luci-app-run/install.sh
+
+      - name: Create self-extracting package
+        run: |
+          mkdir -p output
+          VERSION=$(date -u -d '+8 hour' +'%Y-%m-%d')
+          cd makeself
+          mv ../luci-app-run .
+          # 文件名包含 _all 关键词,确保被 ImmortalWrt-ImageBuilder 的
+          # build24.sh / build25.sh 架构匹配逻辑 (_all) 下载
+          ./makeself.sh luci-app-run/ ../output/luci-app-run-${VERSION}_all.run "luci-app-run v${{ env.LATEST_TAG }} (ipk+apk)" ./install.sh
+
+      - name: Check file sizes
+        run: |
+          ls -lh output/*.run
+
+      - name: Upload to GitHub Release
+        uses: softprops/action-gh-release@v2.1.0
+        with:
+          tag_name: "luci-app-run"
+          name: "luci-app-run-latest"
+          body: |
+            luci-app-run: 轻量级 LuCI 应用,用于上传并运行 makeself 生成的 .run 安装程序。
+
+            - 支持 24.10 (ipk 格式)
+            - 支持 25.12 (apk 格式)
+            - 单个 .run 包同时包含两种格式,便于被 ImmortalWrt-ImageBuilder 构建拉取
+            - 源仓库: https://github.com/wukongdaily/luci-app-run
+          files: output/*.run
+          token: ${{ secrets.GITHUB_TOKEN }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -7,6 +7,10 @@ on:
         description: "保留最近多少天（默认 7）"
         required: false
         default: "7"
+  schedule:
+    # 每周日凌晨 3 点 (北京时间) 执行 = 周六 19:00 UTC
+    # 定时触发时 keep_days 为空,脚本内默认保留 30 天
+    - cron: '0 19 * * 6'
 
 jobs:
   cleanup_releases:
