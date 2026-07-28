@@ -14,7 +14,8 @@ jobs:
       - name: Fetch latest release info
         id: fetch_latest_release
         run: |
-          latest_tag=$(curl -s https://api.github.com/repos/kenzok8/openwrt-clashoo/releases/latest | jq -r '.tag_name')
+          latest_tag=$(curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+            https://api.github.com/repos/kenzok8/openwrt-clashoo/releases/latest | jq -r '.tag_name')
           echo "LATEST_TAG=$latest_tag" >> $GITHUB_ENV
 
       - name: Install makeself
@@ -25,16 +26,19 @@ jobs:
 
       - name: Download clashoo ipks for all architectures
         run: |
-          RELEASE_INFO=$(curl -s https://api.github.com/repos/kenzok8/openwrt-clashoo/releases/latest)
+          ALL_IPKS=$(curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+            https://api.github.com/repos/kenzok8/openwrt-clashoo/releases/latest \
+            | jq -r '.assets[] | select(.name | test("\\.ipk$")) | "\(.name) \(.browser_download_url)"')
+          
           for ARCH in x86_64 aarch64_cortex-a53 arm_cortex-a7_neon-vfpv4; do
             mkdir -p "$ARCH"
-            echo "$RELEASE_INFO" | jq -r '.assets[] | select(.name | test("\\.ipk$")) | .browser_download_url' | while read url; do
-              name=$(basename "$url")
-              if echo "$name" | grep -q "$ARCH"; then
+            echo "$ALL_IPKS" | while read -r name url; do
+              if echo "$name" | grep -qE "${ARCH}|_all\\.ipk"; then
                 echo "⬇️ $ARCH: $name"
                 curl -sL -o "${ARCH}/${name}" "$url"
               fi
             done
+            ls -lh "$ARCH/"
           done
 
       - name: Create install.sh and pack
