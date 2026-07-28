@@ -126,10 +126,12 @@ jobs:
             fi
           done
 
-          # 下载luci app apk
-          curl -sL -o luci-app-passwall2.apk $(echo "$RELEASE_INFO" | jq -r '.assets[] | select(.name | contains("luci-app-passwall2") and endswith(".apk")) | .browser_download_url' | head -1)
-          # 下载luci简体中文语言包apk
-          curl -sL -o luci-i18n-passwall2-zh-cn.apk $(echo "$RELEASE_INFO" | jq -r '.assets[] | select(.name | contains("luci-i18n-passwall2-zh-cn") and endswith(".apk")) | .browser_download_url' | head -1)
+          # 下载luci app apk (保留原始文件名,包含版本号,供apk index正确解析)
+          LUCI_APP_URL=$(echo "$RELEASE_INFO" | jq -r '.assets[] | select(.name | contains("luci-app-passwall2") and endswith(".apk")) | .browser_download_url' | head -1)
+          curl -sL -o "$(basename $LUCI_APP_URL)" "$LUCI_APP_URL"
+          # 下载luci简体中文语言包apk (保留原始文件名)
+          LUCI_I18N_URL=$(echo "$RELEASE_INFO" | jq -r '.assets[] | select(.name | contains("luci-i18n-passwall2-zh-cn") and endswith(".apk")) | .browser_download_url' | head -1)
+          curl -sL -o "$(basename $LUCI_I18N_URL)" "$LUCI_I18N_URL"
           ls -lh *.apk 2>/dev/null || true
 
       - name: Organize 25.12 apk for all architectures
@@ -142,8 +144,8 @@ jobs:
             else
               echo "⚠️ $ARCH: 无 apk zip"
             fi
-            cp downloads-apk/luci-app-passwall2.apk "apk-$ARCH/main/" 2>/dev/null
-            cp downloads-apk/luci-i18n-passwall2-zh-cn.apk "apk-$ARCH/main/" 2>/dev/null
+            cp downloads-apk/luci-app-passwall2-*.apk "apk-$ARCH/main/" 2>/dev/null
+            cp downloads-apk/luci-i18n-passwall2-zh-cn-*.apk "apk-$ARCH/main/" 2>/dev/null
             echo "  + $(ls apk-$ARCH/main/*.apk 2>/dev/null | wc -l) main"
           done
 

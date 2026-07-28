@@ -51,8 +51,11 @@ jobs:
             mkdir -p "apk-$ARCH"
             echo "$ALL_APKS" | while read -r name url; do
               if echo "$name" | grep -qE "${ARCH}"; then
-                echo "⬇️ $ARCH (apk): $name"
-                curl -sL -o "apk-$ARCH/$name" "$url"
+                # 去除文件名中的架构后缀,保留标准格式 包名-版本号.apk
+                # 例: clashoo-1.0-r1-arm_cortex-a7_neon-vfpv4.apk -> clashoo-1.0-r1.apk
+                clean_name=$(echo "$name" | sed "s/-${ARCH}//")
+                echo "⬇️ $ARCH (apk): $name -> $clean_name"
+                curl -sL -o "apk-$ARCH/$clean_name" "$url"
               fi
             done
             ls -lh "apk-$ARCH/" 2>/dev/null || echo "⚠️ $ARCH: no apk found"
