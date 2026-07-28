@@ -36,15 +36,13 @@ jobs:
         run: |
           RELEASE_INFO=$(curl -s https://api.github.com/repos/sbwml/luci-app-openlist2/releases/latest)
           for ARCH in aarch64_cortex-a53 x86_64 arm_cortex-a7_neon-vfpv4; do
-            URL=$(echo "$RELEASE_INFO" | python3 -c "
-import json,sys
-d=json.load(sys.stdin)
-arch='$ARCH'
-for a in d['assets']:
-    if arch in a['name'] and '24.10' in a['name'] and a['name'].endswith('.tar.gz'):
-        print(a['browser_download_url'])
-        break
-")
+            URL=$(echo "$RELEASE_INFO" | python3 -c "          import json,sys
+          d=json.load(sys.stdin)
+          arch='$ARCH'
+          for a in d['assets']:
+              if arch in a['name'] and '24.10' in a['name'] and a['name'].endswith('.tar.gz'):
+                  print(a['browser_download_url'])
+                  break")
             if [ -n "$URL" ]; then
               echo "⬇️ $ARCH (24.10 ipk): $(basename $URL)"
               mkdir -p "ipk-$ARCH"
@@ -69,15 +67,13 @@ for a in d['assets']:
         run: |
           RELEASE_INFO=$(curl -s https://api.github.com/repos/sbwml/luci-app-openlist2/releases/latest)
           for ARCH in aarch64_cortex-a53 x86_64 arm_cortex-a7_neon-vfpv4; do
-            URL=$(echo "$RELEASE_INFO" | python3 -c "
-import json,sys
-d=json.load(sys.stdin)
-arch='$ARCH'
-for a in d['assets']:
-    if arch in a['name'] and '25.12' in a['name'] and a['name'].endswith('.tar.gz'):
-        print(a['browser_download_url'])
-        break
-")
+            URL=$(echo "$RELEASE_INFO" | python3 -c "          import json,sys
+          d=json.load(sys.stdin)
+          arch='$ARCH'
+          for a in d['assets']:
+              if arch in a['name'] and '25.12' in a['name'] and a['name'].endswith('.tar.gz'):
+                  print(a['browser_download_url'])
+                  break")
             if [ -n "$URL" ]; then
               echo "⬇️ $ARCH (25.12 apk): $(basename $URL)"
               mkdir -p "apk-$ARCH"
