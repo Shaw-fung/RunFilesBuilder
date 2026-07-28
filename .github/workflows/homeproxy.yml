@@ -1,5 +1,6 @@
 #=================================================
 # https://github.com/wukongdaily/RunFilesBuilder
+# Modified by Shaw-fung: added arm_cortex-a7_neon-vfpv4 support + daily cron
 # Description: Build RunFiles using GitHub Actions
 # Lisence: MIT
 # Author: wukongdaily
