@@ -214,15 +214,15 @@ jobs:
               echo "⚠️ $ARCH: 无 ipk 包,跳过打包"
               continue
             fi
-            cat <<'EOF' > "../ipk-$ARCH/install.sh"
-#!/bin/sh
-opkg update
-if [ \$? -ne 0 ]; then
-    echo "update failed"
-    exit 1
-fi
-opkg install *.ipk --force-depends
-EOF
+            cat <<EOF > "../ipk-$ARCH/install.sh"
+          #!/bin/sh
+          opkg update
+          if [ \$? -ne 0 ]; then
+              echo "update failed"
+              exit 1
+          fi
+          opkg install *.ipk --force-depends
+          EOF
             chmod +x "../ipk-$ARCH/install.sh"
             mv "../ipk-$ARCH" .
             ./makeself.sh "ipk-$ARCH/" "../output/dae_${{ env.DAE_VERSION }}_ipk_${ARCH}.run" \
@@ -238,10 +238,10 @@ EOF
               echo "⚠️ $ARCH: 无 apk 包,跳过打包"
               continue
             fi
-            cat <<'EOF' > "../apk-$ARCH/install.sh"
-#!/bin/sh
-apk add --no-cache --allow-untrusted *.apk || true
-EOF
+            cat <<EOF > "../apk-$ARCH/install.sh"
+          #!/bin/sh
+          apk add --no-cache --allow-untrusted *.apk || true
+          EOF
             chmod +x "../apk-$ARCH/install.sh"
             mv "../apk-$ARCH" .
             ./makeself.sh "apk-$ARCH/" "../output/dae_${{ env.DAE_VERSION }}_apk_${ARCH}.run" \
