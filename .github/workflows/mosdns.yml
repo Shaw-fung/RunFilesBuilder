@@ -26,8 +26,11 @@ jobs:
       - name: Fetch latest release tag from mosdns
         id: fetch_latest_tag
         run: |
-          latest_tag=$(curl -sk https://api.github.com/repos/sbwml/luci-app-mosdns/releases | grep "tag_name" | grep v5 | head -n 1 | awk -F ":" '{print $2}' | sed 's/\"//g;s/,//;s/ //')
+          latest_tag=$(curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+            https://api.github.com/repos/sbwml/luci-app-mosdns/releases | \
+            grep "tag_name" | grep v5 | head -n 1 | awk -F ":" '{print $2}' | sed 's/"//g;s/,//;s/ //')
           echo "LATEST_TAG=$latest_tag" >> $GITHUB_ENV
+          echo "📌 最新 tag: $latest_tag"
 
       - name: Clone makeself repository
         run: git clone https://github.com/megastep/makeself.git
@@ -35,11 +38,12 @@ jobs:
       - name: Download 24.10 ipk packages (tar.gz)
         run: |
           echo "Downloading MosDNS 24.10 IPK packages..."
-          RELEASE_INFO=$(curl -sk "https://api.github.com/repos/sbwml/luci-app-mosdns/releases")
+          RELEASE_INFO=$(curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+            "https://api.github.com/repos/sbwml/luci-app-mosdns/releases")
 
           for ARCH in x86_64 aarch64_cortex-a53 arm_cortex-a7_neon-vfpv4; do
             mkdir -p "ipk-$ARCH"
-            URL=$(echo "$RELEASE_INFO" | grep "browser_download_url" | grep "$latest_tag" | grep "${ARCH}-openwrt-24.10.tar.gz" | head -1 | awk -F '"' '{print $4}')
+            URL=$(echo "$RELEASE_INFO" | grep "browser_download_url" | grep "${{ env.LATEST_TAG }}" | grep "${ARCH}-openwrt-24.10.tar.gz" | head -1 | awk -F '"' '{print $4}')
             if [ -n "$URL" ]; then
               echo "⬇️ $ARCH (24.10 ipk): $(basename $URL)"
               curl --connect-timeout 30 -m 600 -kLo "${ARCH}_24.10.tar.gz" "$URL"
@@ -55,11 +59,12 @@ jobs:
       - name: Download 25.12 apk packages (tar.gz)
         run: |
           echo "Downloading MosDNS 25.12 APK packages..."
-          RELEASE_INFO=$(curl -sk "https://api.github.com/repos/sbwml/luci-app-mosdns/releases")
+          RELEASE_INFO=$(curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+            "https://api.github.com/repos/sbwml/luci-app-mosdns/releases")
 
           for ARCH in x86_64 aarch64_cortex-a53 arm_cortex-a7_neon-vfpv4; do
             mkdir -p "apk-$ARCH"
-            URL=$(echo "$RELEASE_INFO" | grep "browser_download_url" | grep "$latest_tag" | grep "${ARCH}-openwrt-25.12.tar.gz" | head -1 | awk -F '"' '{print $4}')
+            URL=$(echo "$RELEASE_INFO" | grep "browser_download_url" | grep "${{ env.LATEST_TAG }}" | grep "${ARCH}-openwrt-25.12.tar.gz" | head -1 | awk -F '"' '{print $4}')
             if [ -n "$URL" ]; then
               echo "⬇️ $ARCH (25.12 apk): $(basename $URL)"
               curl --connect-timeout 30 -m 600 -kLo "${ARCH}_25.12.tar.gz" "$URL"
