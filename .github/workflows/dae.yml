@@ -1,142 +1,282 @@
 #=================================================
-# https://github.com/wukongdaily/RunFilesBuilder
-# Modified: split ipk/apk packages for 24.10/25.12
-# Source: dl.openwrt.ai kiddin9 feed
+# https://github.com/kenzok8/openwrt-daede
+# Description: DAE (daed + luci-app-daede) Run Files Builder
+# 24.10 使用 ipk (opkg) / 25.12 使用 apk (apk)
 #=================================================
+
 name: Make DAE run files
 
 on:
   workflow_dispatch:
   schedule:
-    - cron: '0 2 * * *'
+    - cron: '0 3 * * *'
 
 jobs:
-  make-run:
+  build:
     runs-on: ubuntu-22.04
 
     steps:
-      - name: 📥 Checkout
+      - name: Checkout repository
         uses: actions/checkout@v3
 
-      - name: 📦 安装 makeself 工具
-        run: sudo apt-get update && sudo apt-get install -y makeself curl
-
-      - name: 🚀 下载 24.10 ipk (DAE)
+      - name: Fetch latest release info
+        id: fetch_latest
         run: |
-          for ARCH in x86_64 aarch64_cortex-a53 arm_cortex-a7_neon-vfpv4; do
+          RELEASE_INFO=$(curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+            https://api.github.com/repos/kenzok8/openwrt-daede/releases/latest)
+
+          LATEST_TAG=$(echo "$RELEASE_INFO" | jq -r '.tag_name')
+
+          # dae/daed 版本 (如 dae-2026.07.27-r1-x86_64.apk)
+          DAE_VERSION=$(echo "$RELEASE_INFO" | jq -r '.assets[] | select(.name | test("^dae-[0-9].*\\.apk$")) | .name' | head -1 | awk -F'-' '{print $2}')
+          DAE_REV=$(echo "$RELEASE_INFO" | jq -r '.assets[] | select(.name | test("^dae-[0-9].*\\.apk$")) | .name' | head -1 | awk -F'-' '{print $3}')
+
+          # luci-app-daede 版本 (如 luci-app-daede-1.14.7-r17-aarch64_cortex-a53.apk)
+          LUCI_VERSION=$(echo "$RELEASE_INFO" | jq -r '.assets[] | select(.name | test("^luci-app-daede-.*\\.apk$")) | .name' | head -1 | awk -F'-' '{print $4}')
+          LUCI_REV=$(echo "$RELEASE_INFO" | jq -r '.assets[] | select(.name | test("^luci-app-daede-.*\\.apk$")) | .name' | head -1 | awk -F'-' '{print $5}')
+
+          # vmlinux-btf apk 版本 (如 vmlinux-btf-6.12.94-r1-aarch64_cortex-a53.apk)
+          BTF_APK_VERSION=$(echo "$RELEASE_INFO" | jq -r '.assets[] | select(.name | test("^vmlinux-btf-.*\\.apk$")) | .name' | head -1 | awk -F'-' '{print $3}')
+          BTF_APK_REV=$(echo "$RELEASE_INFO" | jq -r '.assets[] | select(.name | test("^vmlinux-btf-.*\\.apk$")) | .name' | head -1 | awk -F'-' '{print $4}')
+
+          # vmlinux-btf ipk 版本 (如 vmlinux-btf_6.6.141-r1_aarch64_cortex-a53.ipk)
+          BTF_IPK_VERSION=$(echo "$RELEASE_INFO" | jq -r '.assets[] | select(.name | test("^vmlinux-btf_.*\\.ipk$")) | .name' | head -1 | awk -F'_' '{print $2}' | awk -F'-' '{print $1}')
+          BTF_IPK_REV=$(echo "$RELEASE_INFO" | jq -r '.assets[] | select(.name | test("^vmlinux-btf_.*\\.ipk$")) | .name' | head -1 | awk -F'_' '{print $2}' | awk -F'-' '{print $2}')
+
+          echo "LATEST_TAG=$LATEST_TAG" >> $GITHUB_ENV
+          echo "DAE_VERSION=$DAE_VERSION" >> $GITHUB_ENV
+          echo "DAE_REV=$DAE_REV" >> $GITHUB_ENV
+          echo "LUCI_VERSION=$LUCI_VERSION" >> $GITHUB_ENV
+          echo "LUCI_REV=$LUCI_REV" >> $GITHUB_ENV
+          echo "BTF_APK_VERSION=$BTF_APK_VERSION" >> $GITHUB_ENV
+          echo "BTF_APK_REV=$BTF_APK_REV" >> $GITHUB_ENV
+          echo "BTF_IPK_VERSION=$BTF_IPK_VERSION" >> $GITHUB_ENV
+          echo "BTF_IPK_REV=$BTF_IPK_REV" >> $GITHUB_ENV
+
+          echo "📌 Tag: $LATEST_TAG"
+          echo "   dae/daed:     ${DAE_VERSION}-${DAE_REV}"
+          echo "   luci-app-daede: ${LUCI_VERSION}-${LUCI_REV}"
+          echo "   vmlinux-btf (apk): ${BTF_APK_VERSION}-${BTF_APK_REV}"
+          echo "   vmlinux-btf (ipk): ${BTF_IPK_VERSION}-${BTF_IPK_REV}"
+
+      - name: Clone makeself repository
+        run: git clone https://github.com/megastep/makeself.git
+
+      # ========== 24.10 ipk 分包 ==========
+      - name: Download 24.10 ipk packages
+        run: |
+          RELEASE_INFO=$(curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+            https://api.github.com/repos/kenzok8/openwrt-daede/releases/latest)
+
+          DAE_VER="${{ env.DAE_VERSION }}"
+          DAE_REV="${{ env.DAE_REV }}"
+          LUCI_VER="${{ env.LUCI_VERSION }}"
+          LUCI_REV="${{ env.LUCI_REV }}"
+          BTF_IPK_VER="${{ env.BTF_IPK_VERSION }}"
+          BTF_IPK_REV="${{ env.BTF_IPK_REV }}"
+
+          for ARCH in x86_64 aarch64_cortex-a53 aarch64_cortex-a72 aarch64_generic arm_cortex-a7_neon-vfpv4 arm_cortex-a9 arm_cortex-a9_neon i386_pentium4; do
             mkdir -p "ipk-$ARCH"
-            BASE_URL="https://dl.openwrt.ai/packages-24.10/${ARCH}/kiddin9/"
-            page_content=$(curl -s "$BASE_URL")
-            for prefix in luci-app-dae luci-i18n-dae-zh-cn daed daed-geoip daed-geosite; do
-              match=$(echo "$page_content" | grep -oP 'href="\K[^"]+\.ipk' | grep "^${prefix}_" | head -n1)
-              if [ -n "$match" ]; then
-                echo "⬇️ $ARCH (24.10): $match"
-                curl -sL -o "ipk-${ARCH}/${match}" "${BASE_URL}${match}"
-                if echo "$match" | grep -q '~'; then
-                  new_name=$(basename "$match" | tr '~' '-')
-                  mv "ipk-${ARCH}/${match}" "ipk-${ARCH}/${new_name}"
-                fi
+
+            # dae (core)
+            URL=$(echo "$RELEASE_INFO" | jq -r --arg arch "$ARCH" --arg ver "$DAE_VER" --arg rev "$DAE_REV" \
+              '.assets[] | select(.name | test("^dae_" + $ver + "-" + $rev + "_" + $arch + "\\.ipk$")) | .browser_download_url' \
+              | head -1)
+            if [ -n "$URL" ]; then
+              echo "⬇️ $ARCH (ipk) dae: $(basename $URL)"
+              curl -sL -o "ipk-$ARCH/$(basename $URL)" "$URL"
+            else
+              echo "⚠️ $ARCH: dae ipk not found"
+            fi
+
+            # daed (daemon)
+            URL=$(echo "$RELEASE_INFO" | jq -r --arg arch "$ARCH" --arg ver "$DAE_VER" --arg rev "$DAE_REV" \
+              '.assets[] | select(.name | test("^daed_" + $ver + "-" + $rev + "_" + $arch + "\\.ipk$")) | .browser_download_url' \
+              | head -1)
+            if [ -n "$URL" ]; then
+              echo "⬇️ $ARCH (ipk) daed: $(basename $URL)"
+              curl -sL -o "ipk-$ARCH/$(basename $URL)" "$URL"
+            else
+              echo "⚠️ $ARCH: daed ipk not found"
+            fi
+
+            # luci-app-daede (_all 架构包,每个架构目录放一份)
+            LUCI_URL=$(echo "$RELEASE_INFO" | jq -r --arg ver "$LUCI_VER" --arg rev "$LUCI_REV" \
+              '.assets[] | select(.name | test("^luci-app-daede_" + $ver + "-" + $rev + "_all\\.ipk$")) | .browser_download_url' \
+              | head -1)
+            if [ -n "$LUCI_URL" ]; then
+              echo "⬇️ $ARCH (ipk) luci-app-daede: $(basename $LUCI_URL)"
+              curl -sL -o "ipk-$ARCH/$(basename $LUCI_URL)" "$LUCI_URL"
+            else
+              echo "⚠️ $ARCH: luci-app-daede ipk not found"
+            fi
+
+            # vmlinux-btf (仅部分架构有)
+            if [ -n "$BTF_IPK_VER" ]; then
+              BTF_URL=$(echo "$RELEASE_INFO" | jq -r --arg arch "$ARCH" --arg ver "$BTF_IPK_VER" --arg rev "$BTF_IPK_REV" \
+                '.assets[] | select(.name | test("^vmlinux-btf_" + $ver + "-" + $rev + "_" + $arch + "\\.ipk$")) | .browser_download_url' \
+                | head -1)
+              if [ -n "$BTF_URL" ]; then
+                echo "⬇️ $ARCH (ipk) vmlinux-btf: $(basename $BTF_URL)"
+                curl -sL -o "ipk-$ARCH/$(basename $BTF_URL)" "$BTF_URL"
               else
-                echo "⚠️ $ARCH: not found: $prefix"
+                echo "ℹ️ $ARCH: vmlinux-btf ipk not available (skipping)"
               fi
-            done
+            fi
+
+            echo "📦 $ARCH ipk packages:"
+            ls -lh "ipk-$ARCH/" 2>/dev/null || echo "  (empty)"
+            echo ""
           done
 
-      - name: 🚀 下载 25.12 兼容包 (DAE)
+      # ========== 25.12 apk 分包 ==========
+      - name: Download 25.12 apk packages
         run: |
-          for ARCH in x86_64 aarch64_cortex-a53 arm_cortex-a7_neon-vfpv4; do
+          RELEASE_INFO=$(curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+            https://api.github.com/repos/kenzok8/openwrt-daede/releases/latest)
+
+          DAE_VER="${{ env.DAE_VERSION }}"
+          DAE_REV="${{ env.DAE_REV }}"
+          LUCI_VER="${{ env.LUCI_VERSION }}"
+          LUCI_REV="${{ env.LUCI_REV }}"
+          BTF_APK_VER="${{ env.BTF_APK_VERSION }}"
+          BTF_APK_REV="${{ env.BTF_APK_REV }}"
+
+          for ARCH in x86_64 aarch64_cortex-a53 aarch64_cortex-a72 aarch64_generic arm_cortex-a7_neon-vfpv4 arm_cortex-a9 arm_cortex-a9_neon i386_pentium4; do
             mkdir -p "apk-$ARCH"
-            BASE_URL="https://dl.openwrt.ai/packages-25.12/${ARCH}/kiddin9/"
-            page_content=$(curl -s "$BASE_URL")
-            for prefix in luci-app-dae luci-i18n-dae-zh-cn daed daed-geoip daed-geosite; do
-              match=$(echo "$page_content" | grep -oP 'href="\K[^"]+\.ipk' | grep "^${prefix}_" | head -n1)
-              if [ -n "$match" ]; then
-                echo "⬇️ $ARCH (25.12): $match"
-                curl -sL -o "apk-${ARCH}/${match}" "${BASE_URL}${match}"
-                if echo "$match" | grep -q '~'; then
-                  new_name=$(basename "$match" | tr '~' '-')
-                  mv "apk-${ARCH}/${match}" "apk-${ARCH}/${new_name}"
-                fi
+
+            # dae (core) - 去除架构后缀 + 修正版本分隔符 (-r → ~r)
+            URL=$(echo "$RELEASE_INFO" | jq -r --arg arch "$ARCH" --arg ver "$DAE_VER" --arg rev "$DAE_REV" \
+              '.assets[] | select(.name | test("^dae-" + $ver + "-" + $rev + "-" + $arch + "\\.apk$")) | .browser_download_url' \
+              | head -1)
+            if [ -n "$URL" ]; then
+              orig_name=$(basename "$URL")
+              clean_name=$(echo "$orig_name" | sed "s/-${ARCH}//" | sed -E 's/-r([0-9]+)\.apk$/~r\1.apk/')
+              echo "⬇️ $ARCH (apk) dae: $orig_name -> $clean_name"
+              curl -sL -o "apk-$ARCH/$clean_name" "$URL"
+            else
+              echo "⚠️ $ARCH: dae apk not found"
+            fi
+
+            # daed (daemon)
+            URL=$(echo "$RELEASE_INFO" | jq -r --arg arch "$ARCH" --arg ver "$DAE_VER" --arg rev "$DAE_REV" \
+              '.assets[] | select(.name | test("^daed-" + $ver + "-" + $rev + "-" + $arch + "\\.apk$")) | .browser_download_url' \
+              | head -1)
+            if [ -n "$URL" ]; then
+              orig_name=$(basename "$URL")
+              clean_name=$(echo "$orig_name" | sed "s/-${ARCH}//" | sed -E 's/-r([0-9]+)\.apk$/~r\1.apk/')
+              echo "⬇️ $ARCH (apk) daed: $orig_name -> $clean_name"
+              curl -sL -o "apk-$ARCH/$clean_name" "$URL"
+            else
+              echo "⚠️ $ARCH: daed apk not found"
+            fi
+
+            # luci-app-daede
+            URL=$(echo "$RELEASE_INFO" | jq -r --arg arch "$ARCH" --arg ver "$LUCI_VER" --arg rev "$LUCI_REV" \
+              '.assets[] | select(.name | test("^luci-app-daede-" + $ver + "-" + $rev + "-" + $arch + "\\.apk$")) | .browser_download_url' \
+              | head -1)
+            if [ -n "$URL" ]; then
+              orig_name=$(basename "$URL")
+              clean_name=$(echo "$orig_name" | sed "s/-${ARCH}//" | sed -E 's/-r([0-9]+)\.apk$/~r\1.apk/')
+              echo "⬇️ $ARCH (apk) luci-app-daede: $orig_name -> $clean_name"
+              curl -sL -o "apk-$ARCH/$clean_name" "$URL"
+            else
+              echo "⚠️ $ARCH: luci-app-daede apk not found"
+            fi
+
+            # vmlinux-btf (仅部分架构有)
+            if [ -n "$BTF_APK_VER" ]; then
+              BTF_URL=$(echo "$RELEASE_INFO" | jq -r --arg arch "$ARCH" --arg ver "$BTF_APK_VER" --arg rev "$BTF_APK_REV" \
+                '.assets[] | select(.name | test("^vmlinux-btf-" + $ver + "-" + $rev + "-" + $arch + "\\.apk$")) | .browser_download_url' \
+                | head -1)
+              if [ -n "$BTF_URL" ]; then
+                orig_name=$(basename "$BTF_URL")
+                clean_name=$(echo "$orig_name" | sed "s/-${ARCH}//" | sed -E 's/-r([0-9]+)\.apk$/~r\1.apk/')
+                echo "⬇️ $ARCH (apk) vmlinux-btf: $orig_name -> $clean_name"
+                curl -sL -o "apk-$ARCH/$clean_name" "$BTF_URL"
               else
-                echo "⚠️ $ARCH: not found: $prefix"
+                echo "ℹ️ $ARCH: vmlinux-btf apk not available (skipping)"
               fi
-            done
+            fi
+
+            echo "📦 $ARCH apk packages:"
+            ls -lh "apk-$ARCH/" 2>/dev/null || echo "  (empty)"
+            echo ""
           done
 
-      - name: 🔍 提取版本号并打包
-        id: pack
+      # ========== 打包 ipk 分包 (24.10) ==========
+      - name: Pack ipk run files (24.10)
         run: |
-          git clone https://github.com/megastep/makeself.git
           mkdir -p output
-
-          APP_IPK=$(ls ipk-x86_64/luci-app-dae_*.ipk 2>/dev/null | head -n 1)
-          if [ -z "$APP_IPK" ]; then
-            echo "❌ 无法提取版本号"
-            exit 1
-          fi
-          VERSION=$(basename "$APP_IPK" | sed -n 's/^luci-app-dae_\(.*\)_all\.ipk$/\1/p' | tr '~' '-')
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
-          echo "版本: $VERSION"
-
-          # ipk 包 (24.10)
-          for ARCH in x86_64 aarch64_cortex-a53 arm_cortex-a7_neon-vfpv4; do
-            if [ -z "$(ls -A ipk-$ARCH/*.ipk 2>/dev/null)" ]; then
+          cd makeself
+          for ARCH in x86_64 aarch64_cortex-a53 aarch64_cortex-a72 aarch64_generic arm_cortex-a7_neon-vfpv4 arm_cortex-a9 arm_cortex-a9_neon i386_pentium4; do
+            if [ -z "$(ls -A ../ipk-$ARCH/*.ipk 2>/dev/null)" ]; then
+              echo "⚠️ $ARCH: 无 ipk 包,跳过打包"
               continue
             fi
-            cat <<'EOF' > "ipk-$ARCH/install.sh"
-          #!/bin/sh
-          opkg update
-          if [ $? -ne 0 ]; then
-              echo "update failed"
-              exit 1
-          fi
-          opkg install *.ipk --force-depends
-          EOF
-            chmod +x "ipk-$ARCH/install.sh"
-            mv "ipk-$ARCH" makeself/
-            cd makeself
-            ./makeself.sh "ipk-$ARCH/" "../output/luci-app-dae_${VERSION}_ipk_${ARCH}.run" "dae ${ARCH} v${VERSION} (ipk for 24.10)" ./install.sh
-            cd ..
+            cat <<'EOF' > "../ipk-$ARCH/install.sh"
+#!/bin/sh
+opkg update
+if [ \$? -ne 0 ]; then
+    echo "update failed"
+    exit 1
+fi
+opkg install *.ipk --force-depends
+EOF
+            chmod +x "../ipk-$ARCH/install.sh"
+            mv "../ipk-$ARCH" .
+            ./makeself.sh "ipk-$ARCH/" "../output/dae_${{ env.DAE_VERSION }}_ipk_${ARCH}.run" \
+              "dae ${{ env.DAE_VERSION }} $ARCH (ipk for 24.10)" ./install.sh
           done
 
-          # apk 包 (25.12)
-          for ARCH in x86_64 aarch64_cortex-a53 arm_cortex-a7_neon-vfpv4; do
-            if [ -z "$(ls -A apk-$ARCH/*.ipk 2>/dev/null)" ]; then
+      # ========== 打包 apk 分包 (25.12) ==========
+      - name: Pack apk run files (25.12)
+        run: |
+          cd makeself
+          for ARCH in x86_64 aarch64_cortex-a53 aarch64_cortex-a72 aarch64_generic arm_cortex-a7_neon-vfpv4 arm_cortex-a9 arm_cortex-a9_neon i386_pentium4; do
+            if [ -z "$(ls -A ../apk-$ARCH/*.apk 2>/dev/null)" ]; then
+              echo "⚠️ $ARCH: 无 apk 包,跳过打包"
               continue
             fi
-            cat <<'EOF' > "apk-$ARCH/install.sh"
-          #!/bin/sh
-          apk add --no-cache --allow-untrusted *.ipk 2>/dev/null || opkg install *.ipk --force-depends
-          EOF
-            chmod +x "apk-$ARCH/install.sh"
-            mv "apk-$ARCH" makeself/
-            cd makeself
-            ./makeself.sh "apk-$ARCH/" "../output/luci-app-dae_${VERSION}_apk_${ARCH}.run" "dae ${ARCH} v${VERSION} (apk for 25.12)" ./install.sh
-            cd ..
+            cat <<'EOF' > "../apk-$ARCH/install.sh"
+#!/bin/sh
+apk add --no-cache --allow-untrusted *.apk || true
+EOF
+            chmod +x "../apk-$ARCH/install.sh"
+            mv "../apk-$ARCH" .
+            ./makeself.sh "apk-$ARCH/" "../output/dae_${{ env.DAE_VERSION }}_apk_${ARCH}.run" \
+              "dae ${{ env.DAE_VERSION }} $ARCH (apk for 25.12)" ./install.sh
           done
 
       - name: Check file sizes
         run: |
-          ls -lh output/*.run
+          echo "=== Generated .run files ==="
+          ls -lh output/*.run 2>/dev/null || echo "❌ No .run files generated"
 
-      - name: 📤 上传 .run 文件到 release
+      - name: Upload run files as release assets
         uses: softprops/action-gh-release@v2.1.0
         with:
-          tag_name: "dae-${{ steps.pack.outputs.version }}"
-          name: "dae-${{ steps.pack.outputs.version }}"
+          tag_name: ${{ env.LATEST_TAG }}
+          name: "dae-${{ env.DAE_VERSION }}"
+          files: output/*.run
           body: |
-            DAE (daed + luci-app-dae)
+            DAE (daed + luci-app-daede) for OpenWrt / ImmortalWrt
 
             分包策略:
-            - luci-app-dae_*_ipk_*.run → 24.10 构建 (opkg 安装 .ipk)
-            - luci-app-dae_*_apk_*.run → 25.12 构建 (apk 安装 .ipk 兼容)
+            - dae_*_ipk_*.run → 24.10 构建 (opkg 安装 .ipk)
+            - dae_*_apk_*.run → 25.12 构建 (apk 安装 .apk)
 
             文件名标识:
             - _ipk_ → 仅供 24.10 抓取
             - _apk_ → 仅供 25.12 抓取
 
-            源: dl.openwrt.ai (kiddin9 feed)
-          files: output/*.run
+            包含组件:
+            - dae (核心)
+            - daed (守护进程)
+            - luci-app-daede (LuCI 界面)
+            - vmlinux-btf (内核依赖,部分架构可用)
+
+            源仓库: https://github.com/kenzok8/openwrt-daede
           token: ${{ secrets.GITHUB_TOKEN }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
