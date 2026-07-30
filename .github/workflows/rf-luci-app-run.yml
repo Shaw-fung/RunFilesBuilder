@@ -11,8 +11,8 @@ name: Make luci-app-run run files
 on:
   workflow_dispatch:
   schedule:
-    # 凌晨 0 点 (北京时间) 执行 = 16:00 UTC 前一天
-    - cron: '0 16 * * *'
+    # 凌晨 7 点 (北京时间) 执行 = 23:00 UTC 前一天
+    - cron: '0 23 * * *'
 
 jobs:
   build:

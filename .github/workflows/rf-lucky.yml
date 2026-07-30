@@ -3,7 +3,8 @@ name: Make Lucky run files
 on:
   workflow_dispatch:
   schedule:
-    - cron: '0 6 * * *'
+    # 凌晨 5 点 (北京时间) 执行 = 21:00 UTC 前一天
+    - cron: '0 21 * * *'
 
 jobs:
   build:

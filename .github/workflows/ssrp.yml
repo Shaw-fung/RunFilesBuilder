@@ -8,7 +8,8 @@ name: Make ShadowsocksPlus+ run files
 on:
   workflow_dispatch:
   schedule:
-    - cron: '0 3 * * *'
+    # 凌晨 2 点 (北京时间) 执行 = 18:00 UTC 前一天
+    - cron: '0 18 * * *'
 
 jobs:
   build:

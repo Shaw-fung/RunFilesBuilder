@@ -13,7 +13,8 @@ name: NEW Make Passwall2 run files
 on:
   workflow_dispatch:
   schedule:
-    - cron: '0 1 * * *'
+    # 凌晨 1 点 (北京时间) 执行 = 17:00 UTC 前一天
+    - cron: '0 17 * * *'
 
 jobs:
   build:

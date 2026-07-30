@@ -13,7 +13,8 @@ name: Make nikki run files (ipk + apk)
 on:
   workflow_dispatch:
   schedule:
-    - cron: '0 4 * * *'
+    # 凌晨 4 点 (北京时间) 执行 = 20:00 UTC 前一天
+    - cron: '0 20 * * *'
 
 jobs:
   build:

@@ -3,7 +3,8 @@ name: Make Bandix run files
 on:
   workflow_dispatch:
   schedule:
-    - cron: '0 6 * * *'
+    # 凌晨 6 点 (北京时间) 执行 = 22:00 UTC 前一天
+    - cron: '0 22 * * *'
 
 jobs:
   build:

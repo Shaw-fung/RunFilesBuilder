@@ -13,7 +13,8 @@ name: Make Openlist2 Run File
 on:
   workflow_dispatch:
   schedule:
-    - cron: '0 5 * * *'
+    # 凌晨 4 点 (北京时间) 执行 = 20:00 UTC 前一天
+    - cron: '0 20 * * *'
 
 jobs:
   build:
