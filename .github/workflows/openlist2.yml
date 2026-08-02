@@ -27,32 +27,39 @@ jobs:
       - name: Fetch latest release tag from openlist2
         id: fetch_latest_tag
         run: |
-          latest_tag=$(curl -s https://api.github.com/repos/sbwml/luci-app-openlist2/releases/latest | jq -r '.tag_name')
+          latest_tag=$(curl -s \
+            -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+            -H "User-Agent: RunFilesBuilder" \
+            https://api.github.com/repos/sbwml/luci-app-openlist2/releases/latest | jq -r '.tag_name')
           echo "LATEST_TAG=$latest_tag" >> $GITHUB_ENV
+          echo "✅ Latest tag: $latest_tag"
 
       - name: Clone makeself repository
         run: git clone https://github.com/megastep/makeself.git
 
       - name: Download 24.10 ipk tar.gz
         run: |
-          RELEASE_INFO=$(curl -s https://api.github.com/repos/sbwml/luci-app-openlist2/releases/latest)
+          RELEASE_INFO=$(curl -s \
+            -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+            -H "User-Agent: RunFilesBuilder" \
+            https://api.github.com/repos/sbwml/luci-app-openlist2/releases/latest)
           for ARCH in aarch64_cortex-a53 x86_64 arm_cortex-a7_neon-vfpv4; do
             URL=$(echo "$RELEASE_INFO" | jq -r --arg arch "$ARCH" '.assets[] | select(.name | contains($arch) and contains("24.10") and endswith(".tar.gz")) | .browser_download_url' | head -1)
-            if [ -n "$URL" ]; then
+            if [ -n "$URL" ] && [ "$URL" != "null" ]; then
               echo "⬇️ $ARCH (24.10 ipk): $(basename $URL)"
               mkdir -p "ipk-$ARCH"
               curl -sL -o "${ARCH}_24.10.tar.gz" "$URL"
-              tar -xzf "${ARCH}_24.10.tar.gz" -C "ipk-$ARCH" --strip-components=1
-              rm -f "${ARCH}_24.10.tar.gz"
-              # 处理 ~ 字符
-              pushd "ipk-$ARCH" >/dev/null
-              for f in *~*.ipk; do
-                [ -e "$f" ] || continue
-                new_f=$(echo "$f" | tr -d '~')
-                [ "$f" != "$new_f" ] && mv "$f" "$new_f"
-              done
-              popd >/dev/null
-              echo "  ipk 文件数: $(ls ipk-$ARCH/*.ipk 2>/dev/null | wc -l)"
+              if [ -s "${ARCH}_24.10.tar.gz" ]; then
+                tar -xzf "${ARCH}_24.10.tar.gz" -C "ipk-$ARCH" --strip-components=1
+                rm -f "${ARCH}_24.10.tar.gz"
+                # 注意: ~ 是 ipk 版本号合法的 pre-release 分隔符, 不要删除!
+                # 之前错误地用 tr -d '~' 删除会导致版本号不匹配而安装失败
+                echo "  ipk 文件数: $(ls ipk-$ARCH/*.ipk 2>/dev/null | wc -l)"
+                ls -lh "ipk-$ARCH/" 2>/dev/null || true
+              else
+                echo "❌ $ARCH: 下载失败, 文件为空"
+                rm -f "${ARCH}_24.10.tar.gz"
+              fi
             else
               echo "⚠️ $ARCH: 24.10 ipk tar.gz not found"
             fi
@@ -60,16 +67,25 @@ jobs:
 
       - name: Download 25.12 apk tar.gz
         run: |
-          RELEASE_INFO=$(curl -s https://api.github.com/repos/sbwml/luci-app-openlist2/releases/latest)
+          RELEASE_INFO=$(curl -s \
+            -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+            -H "User-Agent: RunFilesBuilder" \
+            https://api.github.com/repos/sbwml/luci-app-openlist2/releases/latest)
           for ARCH in aarch64_cortex-a53 x86_64 arm_cortex-a7_neon-vfpv4; do
             URL=$(echo "$RELEASE_INFO" | jq -r --arg arch "$ARCH" '.assets[] | select(.name | contains($arch) and contains("25.12") and endswith(".tar.gz")) | .browser_download_url' | head -1)
-            if [ -n "$URL" ]; then
+            if [ -n "$URL" ] && [ "$URL" != "null" ]; then
               echo "⬇️ $ARCH (25.12 apk): $(basename $URL)"
               mkdir -p "apk-$ARCH"
               curl -sL -o "${ARCH}_25.12.tar.gz" "$URL"
-              tar -xzf "${ARCH}_25.12.tar.gz" -C "apk-$ARCH" --strip-components=1
-              rm -f "${ARCH}_25.12.tar.gz"
-              echo "  apk 文件数: $(ls apk-$ARCH/*.apk 2>/dev/null | wc -l)"
+              if [ -s "${ARCH}_25.12.tar.gz" ]; then
+                tar -xzf "${ARCH}_25.12.tar.gz" -C "apk-$ARCH" --strip-components=1
+                rm -f "${ARCH}_25.12.tar.gz"
+                echo "  apk 文件数: $(ls apk-$ARCH/*.apk 2>/dev/null | wc -l)"
+                ls -lh "apk-$ARCH/" 2>/dev/null || true
+              else
+                echo "❌ $ARCH: 下载失败, 文件为空"
+                rm -f "${ARCH}_25.12.tar.gz"
+              fi
             else
               echo "⚠️ $ARCH: 25.12 apk tar.gz not found"
             fi
@@ -116,6 +132,8 @@ jobs:
           EOF
             chmod +x "apk-$ARCH/install.sh"
           done
+          # 确保 output 目录存在 (即使 ipk 步骤因异常未创建)
+          mkdir -p output
           cd makeself
           for ARCH in x86_64 aarch64_cortex-a53 arm_cortex-a7_neon-vfpv4; do
             if [ -z "$(ls -A ../apk-$ARCH/*.apk 2>/dev/null)" ]; then
@@ -127,6 +145,11 @@ jobs:
 
       - name: Check file sizes
         run: |
+          if [ -z "$(ls output/*.run 2>/dev/null)" ]; then
+            echo "❌ 没有生成任何 .run 文件!"
+            ls -la output/ 2>/dev/null || echo "output 目录不存在"
+            exit 1
+          fi
           ls -lh output/*.run
 
       - name: Upload run files as release assets
