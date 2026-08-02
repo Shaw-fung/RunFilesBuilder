@@ -1,0 +1,167 @@
+#=================================================
+# Build RunFiles for rtp2httpd (IPTV 流媒体转发服务器)
+# 源: github.com/stackia/rtp2httpd
+# 需按架构打包(rtp2httpd 核心二进制是架构相关)
+# luci 界面为 _all 通用包
+#=================================================
+name: Make rtp2httpd run files
+
+on:
+  workflow_dispatch:
+  schedule:
+    # 凌晨 4:30 (北京时间) 执行 = 20:30 UTC 前一天
+    - cron: '30 20 * * *'
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Fetch latest release info
+        id: fetch_latest_release
+        run: |
+          latest_tag=$(curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+            -H "User-Agent: RunFilesBuilder" \
+            https://api.github.com/repos/stackia/rtp2httpd/releases/latest | jq -r '.tag_name')
+          echo "LATEST_TAG=$latest_tag" >> $GITHUB_ENV
+          echo "📌 最新版本: $latest_tag"
+
+      - name: Install makeself
+        run: sudo apt-get update && sudo apt-get install -y makeself curl jq
+
+      - name: Clone makeself repository
+        run: git clone https://github.com/megastep/makeself.git
+
+      - name: Download rtp2httpd ipks for all architectures (24.10)
+        run: |
+          # 获取所有 ipk 资产
+          ALL_IPKS=$(curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+            -H "User-Agent: RunFilesBuilder" \
+            https://api.github.com/repos/stackia/rtp2httpd/releases/latest \
+            | jq -r '.assets[] | select(.name | test("\\.ipk$")) | "\(.name) \(.browser_download_url)"')
+
+          # 目标架构列表(与 clashoo/openclash 保持一致)
+          for ARCH in x86_64 aarch64_cortex-a53 arm_cortex-a7_neon-vfpv4; do
+            mkdir -p "ipk-$ARCH"
+            echo "$ALL_IPKS" | while read -r name url; do
+              # 匹配架构相关的核心包 + _all 通用的 luci 界面包
+              if echo "$name" | grep -qE "${ARCH}|_all\\.ipk"; then
+                echo "⬇️ $ARCH (ipk): $name"
+                curl -sL -o "ipk-$ARCH/$name" "$url"
+              fi
+            done
+            echo "--- $ARCH 目录内容 ---"
+            ls -lh "ipk-$ARCH/" 2>/dev/null || echo "⚠️ $ARCH: 无文件"
+          done
+
+      - name: Download rtp2httpd apks for all architectures (25.12)
+        run: |
+          # 获取所有 apk 资产
+          ALL_APKS=$(curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+            -H "User-Agent: RunFilesBuilder" \
+            https://api.github.com/repos/stackia/rtp2httpd/releases/latest \
+            | jq -r '.assets[] | select(.name | test("\\.apk$")) | "\(.name) \(.browser_download_url)"')
+
+          for ARCH in x86_64 aarch64_cortex-a53 arm_cortex-a7_neon-vfpv4; do
+            mkdir -p "apk-$ARCH"
+            echo "$ALL_APKS" | while read -r name url; do
+              # 匹配架构相关的核心包 + 通用的 luci 界面包(apk 版本无 _all 后缀,通过 luci-app/luci-i18n 前缀识别)
+              if echo "$name" | grep -qE "${ARCH}"; then
+                echo "⬇️ $ARCH (apk): $name"
+                curl -sL -o "apk-$ARCH/$name" "$url"
+              elif echo "$name" | grep -qE "^luci-app-rtp2httpd|^luci-i18n-rtp2httpd"; then
+                echo "⬇️ $ARCH (apk luci): $name"
+                curl -sL -o "apk-$ARCH/$name" "$url"
+              fi
+            done
+            echo "--- $ARCH 目录内容 ---"
+            ls -lh "apk-$ARCH/" 2>/dev/null || echo "⚠️ $ARCH: 无文件"
+          done
+
+      - name: Create install.sh and pack (ipk 分包 - 24.10)
+        run: |
+          for ARCH in x86_64 aarch64_cortex-a53 arm_cortex-a7_neon-vfpv4; do
+            if [ -z "$(ls -A ipk-$ARCH/ 2>/dev/null)" ]; then
+              echo "⚠️ $ARCH: 无 ipk 包,跳过打包"
+              continue
+            fi
+            cat <<EOF > "ipk-$ARCH/install.sh"
+          #!/bin/sh
+          opkg update
+          if [ \$? -ne 0 ]; then
+              echo "update failed"
+              exit 1
+          fi
+          opkg install *.ipk --force-depends
+          EOF
+            chmod +x "ipk-$ARCH/install.sh"
+          done
+          mkdir -p output
+          cd makeself
+          for ARCH in x86_64 aarch64_cortex-a53 arm_cortex-a7_neon-vfpv4; do
+            if [ ! -d "../ipk-$ARCH" ] || [ -z "$(ls -A ../ipk-$ARCH/ 2>/dev/null)" ]; then
+              continue
+            fi
+            mv ../ipk-$ARCH .
+            # 文件名含 _ipk_ 标识,供 24.10 (opkg) 构建抓取
+            ./makeself.sh ipk-$ARCH/ ../output/rtp2httpd_${{ env.LATEST_TAG }}_ipk_${ARCH}.run "rtp2httpd ${ARCH} v${{ env.LATEST_TAG }} (ipk for 24.10)" ./install.sh
+          done
+
+      - name: Create install.sh and pack (apk 分包 - 25.12)
+        run: |
+          for ARCH in x86_64 aarch64_cortex-a53 arm_cortex-a7_neon-vfpv4; do
+            if [ -z "$(ls -A apk-$ARCH/ 2>/dev/null)" ]; then
+              echo "⚠️ $ARCH: 无 apk 包,跳过打包"
+              continue
+            fi
+            cat <<EOF > "apk-$ARCH/install.sh"
+          #!/bin/sh
+          apk add --no-cache --allow-untrusted *.apk || true
+          EOF
+            chmod +x "apk-$ARCH/install.sh"
+          done
+          cd makeself
+          for ARCH in x86_64 aarch64_cortex-a53 arm_cortex-a7_neon-vfpv4; do
+            if [ ! -d "../apk-$ARCH" ] || [ -z "$(ls -A ../apk-$ARCH/ 2>/dev/null)" ]; then
+              continue
+            fi
+            mv ../apk-$ARCH .
+            # 文件名含 _apk_ 标识,供 25.12 (apk) 构建抓取
+            ./makeself.sh apk-$ARCH/ ../output/rtp2httpd_${{ env.LATEST_TAG }}_apk_${ARCH}.run "rtp2httpd ${ARCH} v${{ env.LATEST_TAG }} (apk for 25.12)" ./install.sh
+          done
+
+      - name: Check output
+        run: |
+          echo "=== 输出文件 ==="
+          ls -lh output/*.run
+          echo ""
+          echo "=== 各 run 包内容验证 ==="
+          for run_file in output/*.run; do
+            echo "--- $run_file ---"
+            sh "$run_file" --target /tmp/verify_$(basename "$run_file" .run) --noexec 2>&1 | tail -1
+            find /tmp/verify_$(basename "$run_file" .run) -name "*.ipk" -o -name "*.apk" 2>/dev/null | xargs -I{} basename {} | sort -u
+          done
+
+      - name: Upload to GitHub Release
+        uses: softprops/action-gh-release@v2.1.0
+        with:
+          tag_name: "luci-app-rtp2httpd"
+          name: "rtp2httpd-latest"
+          body: |
+            IPTV 流媒体转发服务器 - rtp2httpd
+
+            分包策略:
+            - rtp2httpd_*_ipk_*.run → 24.10 构建 (opkg 安装 .ipk)
+            - rtp2httpd_*_apk_*.run → 25.12 构建 (apk 安装 .apk)
+
+            文件名标识:
+            - _ipk_ → 仅供 24.10 抓取
+            - _apk_ → 仅供 25.12 抓取
+
+            源仓库: https://github.com/stackia/rtp2httpd
+            当前版本: ${{ env.LATEST_TAG }}
+          files: output/*.run
+          token: ${{ secrets.GITHUB_TOKEN }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

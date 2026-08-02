@@ -1,7 +1,7 @@
 #=================================================
 # Build RunFiles for misc all-arch plugins
-# (uninstall, aurora theme, rtp2httpd)
-# Split ipk/apk packages for 24.10/25.12
+# (uninstall, aurora theme) - all-arch 通用包
+# rtp2httpd 已拆分到 rf-rtp2httpd.yml(需按架构打包核心二进制)
 #=================================================
 name: Make misc all-arch plugins run files
 
@@ -27,7 +27,7 @@ jobs:
           mkdir -p ipk-all
           BASE_URL="https://dl.openwrt.ai/packages-24.10/x86_64/kiddin9/"
           page_content=$(curl -s "$BASE_URL")
-          for prefix in luci-app-uninstall luci-theme-aurora luci-app-aurora-config luci-i18n-aurora-config-zh-cn luci-app-rtp2httpd luci-i18n-rtp2httpd-zh-cn; do
+          for prefix in luci-app-uninstall luci-theme-aurora luci-app-aurora-config luci-i18n-aurora-config-zh-cn; do
             match=$(echo "$page_content" | grep -oP 'href="\K[^"]+\.ipk' | grep "^${prefix}_" | head -n1)
             if [ -n "$match" ]; then
               echo "⬇️ (24.10): $match"
@@ -42,7 +42,7 @@ jobs:
           mkdir -p apk-all
           BASE_URL="https://dl.openwrt.ai/packages-25.12/x86_64/kiddin9/"
           page_content=$(curl -s "$BASE_URL")
-          for prefix in luci-app-uninstall luci-theme-aurora luci-app-aurora-config luci-i18n-aurora-config-zh-cn luci-app-rtp2httpd luci-i18n-rtp2httpd-zh-cn; do
+          for prefix in luci-app-uninstall luci-theme-aurora luci-app-aurora-config luci-i18n-aurora-config-zh-cn; do
             match=$(echo "$page_content" | grep -oP 'href="\K[^"]+\.ipk' | grep "^${prefix}_" | head -n1)
             if [ -n "$match" ]; then
               echo "⬇️ (25.12): $match"
@@ -88,21 +88,6 @@ jobs:
           ./makeself.sh pkg-ipk-aurora/ ../output/luci-theme-aurora_${VERSION}_ipk_all.run "aurora theme v${VERSION} (ipk for 24.10)" ./install.sh
           cd ..
 
-          # rtp2httpd ipk
-          mkdir -p pkg-ipk-rtp2httpd
-          cp ipk-all/luci-app-rtp2httpd*.ipk pkg-ipk-rtp2httpd/ 2>/dev/null || true
-          cp ipk-all/luci-i18n-rtp2httpd*.ipk pkg-ipk-rtp2httpd/ 2>/dev/null || true
-          cat <<'EOF' > pkg-ipk-rtp2httpd/install.sh
-          #!/bin/sh
-          opkg update
-          opkg install *.ipk --force-depends
-          EOF
-          chmod +x pkg-ipk-rtp2httpd/install.sh
-          mv pkg-ipk-rtp2httpd makeself/
-          cd makeself
-          ./makeself.sh pkg-ipk-rtp2httpd/ ../output/luci-app-rtp2httpd_${VERSION}_ipk_all.run "rtp2httpd v${VERSION} (ipk for 24.10)" ./install.sh
-          cd ..
-
       - name: Organize and pack uninstall (apk 25.12)
         run: |
           VERSION=$(date -u -d '+8 hour' +'%Y-%m-%d')
@@ -135,20 +120,6 @@ jobs:
           ./makeself.sh pkg-apk-aurora/ ../output/luci-theme-aurora_${VERSION}_apk_all.run "aurora theme v${VERSION} (apk for 25.12)" ./install.sh
           cd ..
 
-          # rtp2httpd apk
-          mkdir -p pkg-apk-rtp2httpd
-          cp apk-all/luci-app-rtp2httpd*.ipk pkg-apk-rtp2httpd/ 2>/dev/null || true
-          cp apk-all/luci-i18n-rtp2httpd*.ipk pkg-apk-rtp2httpd/ 2>/dev/null || true
-          cat <<'EOF' > pkg-apk-rtp2httpd/install.sh
-          #!/bin/sh
-          apk add --no-cache --allow-untrusted *.ipk 2>/dev/null || opkg install *.ipk --force-depends
-          EOF
-          chmod +x pkg-apk-rtp2httpd/install.sh
-          mv pkg-apk-rtp2httpd makeself/
-          cd makeself
-          ./makeself.sh pkg-apk-rtp2httpd/ ../output/luci-app-rtp2httpd_${VERSION}_apk_all.run "rtp2httpd v${VERSION} (apk for 25.12)" ./install.sh
-          cd ..
-
       - name: Check file sizes
         run: |
           ls -lh output/*.run
@@ -159,7 +130,7 @@ jobs:
           tag_name: "misc-all-latest"
           name: "misc all-arch plugins"
           body: |
-            Plugins: luci-app-uninstall, luci-theme-aurora, luci-app-rtp2httpd
+            Plugins: luci-app-uninstall, luci-theme-aurora
 
             分包策略:
             - *_ipk_all.run → 24.10 构建 (opkg 安装 .ipk)
